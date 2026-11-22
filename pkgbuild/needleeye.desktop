@@ -1,0 +1,12 @@
+[Desktop Entry]
+Type=Application
+Name=Needleeye
+Name[da]=Needleeye
+Comment=3D Earth globe and live KML/KMZ viewer
+Comment[da]=3D-jordklode og live KML/KMZ-fremviser
+Exec=needleeye %f
+Icon=needleeye
+Terminal=false
+Categories=Geography;Science;Utility;
+MimeType=application/vnd.google-earth.kml+xml;application/vnd.google-earth.kmz;
+StartupWMClass=needleeye

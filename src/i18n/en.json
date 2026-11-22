@@ -1,0 +1,5 @@
+{
+  "%n features": { "one": "%n feature", "other": "%n features" },
+  "%n features loaded": { "one": "%n feature loaded", "other": "%n features loaded" },
+  "Opened %1 (%n features)": { "one": "Opened %1 (%n feature)", "other": "Opened %1 (%n features)" }
+}
