@@ -11,6 +11,8 @@
 GeoCoord KmlPlacemark::anchor() const {
     if (hasPoint)
         return point;
+    if (!samples.isEmpty())
+        return samples.first().coord;
     if (lookAt.valid)
         return {lookAt.lon, lookAt.lat, 0.0};
     if (!lines.isEmpty() && !lines.first().isEmpty()) {
@@ -27,6 +29,47 @@ GeoCoord KmlPlacemark::anchor() const {
         return {sumLon / ring.size(), sumLat / ring.size(), 0.0};
     }
     return {};
+}
+
+GeoCoord KmlPlacemark::positionAt(qint64 timeMs) const {
+    if (samples.isEmpty())
+        return anchor();
+    if (timeMs <= samples.first().timeMs)
+        return samples.first().coord;
+    if (timeMs >= samples.last().timeMs)
+        return samples.last().coord;
+
+    // Binary search for bracketing samples.
+    int lo = 0;
+    int hi = samples.size() - 1;
+    while (lo + 1 < hi) {
+        const int mid = (lo + hi) / 2;
+        if (samples[mid].timeMs <= timeMs)
+            lo = mid;
+        else
+            hi = mid;
+    }
+
+    const auto &a = samples[lo];
+    const auto &b = samples[hi];
+    const double span = static_cast<double>(b.timeMs - a.timeMs);
+    if (span <= 0.0)
+        return a.coord;
+    const double t = (static_cast<double>(timeMs - a.timeMs)) / span;
+
+    // Shortest-path longitude wrap across the antimeridian.
+    double dLon = b.coord.lon - a.coord.lon;
+    while (dLon > 180.0) dLon -= 360.0;
+    while (dLon < -180.0) dLon += 360.0;
+    double lon = a.coord.lon + dLon * t;
+    while (lon > 180.0) lon -= 360.0;
+    while (lon < -180.0) lon += 360.0;
+
+    return {
+        lon,
+        a.coord.lat + (b.coord.lat - a.coord.lat) * t,
+        a.coord.alt + (b.coord.alt - a.coord.alt) * t
+    };
 }
 
 QColor KmlParser::parseKmlColor(const QString &aabbggrr, const QColor &fallback) {

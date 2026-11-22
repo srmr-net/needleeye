@@ -1,4 +1,5 @@
 #include "backend.h"
+#include "czmlparser.h"
 
 #include <QDesktopServices>
 #include <QDir>
@@ -79,6 +80,22 @@ QString formatByteSize(qint64 bytes) {
     if (bytes >= 1024LL)
         return QStringLiteral("%1 KB").arg(static_cast<double>(bytes) / 1024.0, 0, 'f', 0);
     return QStringLiteral("%1 B").arg(bytes);
+}
+
+KmlDocument parseGeospatialBytes(const QByteArray &data, const QString &sourceName, const QString &feedId) {
+    if (CzmlParser::looksLikeCzml(data, sourceName))
+        return CzmlParser::parseBytes(data, sourceName, feedId);
+    return KmlParser::parseBytes(data, sourceName, feedId);
+}
+
+KmlDocument parseGeospatialFile(const QString &filePath, const QString &feedId) {
+    QFile file(filePath);
+    if (!file.open(QIODevice::ReadOnly)) {
+        KmlDocument doc;
+        doc.error = QStringLiteral("Cannot open %1: %2").arg(filePath, file.errorString());
+        return doc;
+    }
+    return parseGeospatialBytes(file.readAll(), QFileInfo(filePath).fileName(), feedId);
 }
 
 } // namespace
@@ -793,33 +810,45 @@ QVariantMap Backend::selectedPlacemarkVariant() const {
     if (m_selectedId.isEmpty())
         return {};
 
+    auto buildMap = [](const KmlPlacemark &pm, const QString &feedName) {
+        const GeoCoord c = pm.anchor();
+        QVariantMap m;
+        m.insert(QStringLiteral("id"), pm.id);
+        m.insert(QStringLiteral("name"), pm.name);
+        m.insert(QStringLiteral("feedName"), feedName);
+        m.insert(QStringLiteral("folder"), pm.folderPath);
+        m.insert(QStringLiteral("lat"), c.lat);
+        m.insert(QStringLiteral("lon"), c.lon);
+        m.insert(QStringLiteral("alt"), c.alt);
+        m.insert(QStringLiteral("description"), pm.descriptionText);
+        m.insert(QStringLiteral("linkUrl"), pm.linkUrl);
+        m.insert(QStringLiteral("color"), pm.style.iconColor.name());
+        m.insert(QStringLiteral("time"),
+                 pm.timeStart.isValid() ? pm.timeStart.toLocalTime().toString(Qt::ISODate).replace('T', ' ') : QString());
+        QVariantList extList;
+        for (auto it = pm.extendedData.cbegin(); it != pm.extendedData.cend(); ++it) {
+            QVariantMap kv;
+            kv.insert(QStringLiteral("key"), it.key());
+            kv.insert(QStringLiteral("value"), it.value());
+            extList.append(kv);
+        }
+        m.insert(QStringLiteral("extendedData"), extList);
+        return m;
+    };
+
+    // Prefer the live interpolated version from m_visiblePlacemarks when available.
+    for (const auto &pm : m_visiblePlacemarks) {
+        if (pm.id != m_selectedId)
+            continue;
+        const int fIdx = findFeedIndex(pm.feedId);
+        const QString feedName = fIdx >= 0 ? m_feeds[fIdx].name : QString();
+        return buildMap(pm, feedName);
+    }
+
     for (const auto &feed : m_feeds) {
         for (const auto &pm : feed.placemarks) {
-            if (pm.id != m_selectedId)
-                continue;
-            const GeoCoord c = pm.anchor();
-            QVariantMap m;
-            m.insert(QStringLiteral("id"), pm.id);
-            m.insert(QStringLiteral("name"), pm.name);
-            m.insert(QStringLiteral("feedName"), feed.name);
-            m.insert(QStringLiteral("folder"), pm.folderPath);
-            m.insert(QStringLiteral("lat"), c.lat);
-            m.insert(QStringLiteral("lon"), c.lon);
-            m.insert(QStringLiteral("alt"), c.alt);
-            m.insert(QStringLiteral("description"), pm.descriptionText);
-            m.insert(QStringLiteral("linkUrl"), pm.linkUrl);
-            m.insert(QStringLiteral("color"), pm.style.iconColor.name());
-            m.insert(QStringLiteral("time"),
-                     pm.timeStart.isValid() ? pm.timeStart.toLocalTime().toString(Qt::ISODate).replace('T', ' ') : QString());
-            QVariantList extList;
-            for (auto it = pm.extendedData.cbegin(); it != pm.extendedData.cend(); ++it) {
-                QVariantMap kv;
-                kv.insert(QStringLiteral("key"), it.key());
-                kv.insert(QStringLiteral("value"), it.value());
-                extList.append(kv);
-            }
-            m.insert(QStringLiteral("extendedData"), extList);
-            return m;
+            if (pm.id == m_selectedId)
+                return buildMap(pm, feed.name);
         }
     }
     return {};
@@ -925,7 +954,7 @@ void Backend::refreshFeed(const QString &feedId) {
     auto &feed = m_feeds[idx];
     feed.error.clear();
     if (feed.isLocal) {
-        KmlDocument doc = KmlParser::parseFile(feed.source, feed.id);
+        KmlDocument doc = parseGeospatialFile(feed.source, feed.id);
         if (!doc.error.isEmpty()) {
             feed.error = doc.error;
             setError(doc.error);
@@ -999,7 +1028,7 @@ void Backend::fetchUrlForFeed(const QString &feedId, const QString &urlStr, int 
         }
 
         const QByteArray payload = reply->readAll();
-        KmlDocument doc = KmlParser::parseBytes(payload, m_feeds[idx].name, feedId);
+        KmlDocument doc = parseGeospatialBytes(payload, url.fileName().isEmpty() ? m_feeds[idx].name : url.fileName(), feedId);
         if (!doc.error.isEmpty()) {
             m_feeds[idx].loading = false;
             m_feeds[idx].error = doc.error;
@@ -1066,7 +1095,7 @@ bool Backend::ingestKmlBytesForFeed(const QString &feedId, const QByteArray &dat
         idx = m_feeds.size() - 1;
     }
 
-    KmlDocument doc = KmlParser::parseBytes(data, sourceName, feedId);
+    KmlDocument doc = parseGeospatialBytes(data, sourceName, feedId);
     if (!doc.error.isEmpty()) {
         m_feeds[idx].error = doc.error;
         setError(doc.error);
@@ -1096,7 +1125,7 @@ void Backend::addFeedUrl(const QString &url, const QString &name) {
 
     const QUrl parsed(trimmed);
     if (!parsed.isValid() || (parsed.scheme() != QLatin1String("http") && parsed.scheme() != QLatin1String("https"))) {
-        setError(tr("Enter a valid http:// or https:// KML/KMZ URL."));
+        setError(tr("Enter a valid http:// or https:// KML, KMZ, or CZML URL."));
         return;
     }
 
@@ -1130,7 +1159,7 @@ void Backend::removeFeed(const QString &feedId) {
 }
 
 void Backend::openLocalFileDialog() {
-    m_filePicker->openKmlFile(tr("Open KML or KMZ file"), [this](const QString &path, const QString &error) {
+    m_filePicker->openKmlFile(tr("Open KML, KMZ, or CZML file"), [this](const QString &path, const QString &error) {
         if (!error.isEmpty()) {
             setError(error);
             return;
@@ -1142,7 +1171,7 @@ void Backend::openLocalFileDialog() {
 
 bool Backend::loadLocalFile(const QString &filePath) {
     const QString id = QStringLiteral("file-%1").arg(QDateTime::currentMSecsSinceEpoch());
-    KmlDocument doc = KmlParser::parseFile(filePath, id);
+    KmlDocument doc = parseGeospatialFile(filePath, id);
     if (!doc.error.isEmpty()) {
         setError(doc.error);
         return false;
@@ -1262,6 +1291,7 @@ void Backend::rebuildVisiblePlacemarks() {
         : 0;
     const qint64 windowMs = std::max<qint64>(3600 * 1000 * 12, (m_timeMaxMs - m_timeMinMs) / 8);
 
+    bool selectedMoved = false;
     for (const auto &feed : m_feeds) {
         if (!feed.enabled)
             continue;
@@ -1275,20 +1305,34 @@ void Backend::rebuildVisiblePlacemarks() {
                 if (!m_folderVisibility.value(key, true))
                     continue;
             }
-            if (filterTime && pm.timeStart.isValid()) {
-                const qint64 startMs = pm.timeStart.toMSecsSinceEpoch();
-                const qint64 endMs = pm.timeEnd.isValid() ? pm.timeEnd.toMSecsSinceEpoch() : startMs;
-                if (startMs > cursorMs)
-                    continue;
-                if (endMs < cursorMs - windowMs && m_timelineProgress < 0.999)
-                    continue;
+            KmlPlacemark item = pm;
+            if (filterTime && item.timeStart.isValid()) {
+                const qint64 startMs = item.timeStart.toMSecsSinceEpoch();
+                const qint64 endMs = item.timeEnd.isValid() ? item.timeEnd.toMSecsSinceEpoch() : startMs;
+                if (!item.samples.isEmpty()) {
+                    // Time-sampled CZML/track entities stay visible across their availability
+                    // interval and interpolate their live position smoothly along the path.
+                    if (cursorMs < startMs || cursorMs > endMs)
+                        continue;
+                    item.point = item.positionAt(cursorMs);
+                    item.hasPoint = true;
+                    if (item.id == m_selectedId)
+                        selectedMoved = true;
+                } else {
+                    if (startMs > cursorMs)
+                        continue;
+                    if (endMs < cursorMs - windowMs && m_timelineProgress < 0.999)
+                        continue;
+                }
             }
-            m_visiblePlacemarks.append(pm);
+            m_visiblePlacemarks.append(item);
         }
     }
 
     ++m_kmlRevision;
     emit kmlDataChanged();
+    if (selectedMoved)
+        emit selectionChanged();
 }
 
 void Backend::updateSearch(const QString &query) {

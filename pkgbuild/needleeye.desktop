@@ -8,5 +8,5 @@ Exec=needleeye %f
 Icon=needleeye
 Terminal=false
 Categories=Geography;Science;Utility;
-MimeType=application/vnd.google-earth.kml+xml;application/vnd.google-earth.kmz;
+MimeType=application/vnd.google-earth.kml+xml;application/vnd.google-earth.kmz;application/json;
 StartupWMClass=needleeye

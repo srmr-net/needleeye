@@ -6,6 +6,7 @@
 #include <zip.h>
 
 #include "backend.h"
+#include "czmlparser.h"
 #include "kmlparser.h"
 #include "theme.h"
 #include "tilemanager.h"
@@ -322,6 +323,71 @@ private slots:
         b1.setDayNightEnabled(true);
         Backend b2(&tm, &picker, false, settingsFile);
         QCOMPARE(b2.dayNightEnabled(), true);
+    }
+
+    void czmlParsesDocumentEcefSamplesPolygonsAndAnimatesTimeline() {
+        // Verify WGS84 ECEF -> geodetic conversion on equator + 400 km LEO altitude.
+        const GeoCoord eqPt = CzmlParser::ecefToGeodetic(6378137.0 + 400000.0, 0.0, 0.0);
+        QVERIFY(std::abs(eqPt.lon) < 1e-4);
+        QVERIFY(std::abs(eqPt.lat) < 1e-4);
+        QVERIFY(std::abs(eqPt.alt - 400000.0) < 5.0);
+
+        const QByteArray sampleCzml =
+            "[\n"
+            "  {\"id\":\"document\",\"name\":\"Orbital Demo\",\"version\":\"1.0\","
+            "   \"clock\":{\"interval\":\"2026-11-22T00:00:00Z/2026-11-22T01:00:00Z\"}},\n"
+            "  {\"id\":\"grp\",\"name\":\"Satellites\"},\n"
+            "  {\"id\":\"sat-1\",\"name\":\"ISS\",\"parent\":\"grp\","
+            "   \"availability\":\"2026-11-22T00:00:00Z/2026-11-22T01:00:00Z\","
+            "   \"description\":\"<p>Low Earth Orbit <a href=\\\"https://example.org/iss\\\">Live</a></p>\","
+            "   \"position\":{\"epoch\":\"2026-11-22T00:00:00Z\","
+            "     \"cartographicDegrees\":[0, 0.0, 10.0, 420000, 3600, 60.0, 40.0, 420000]},"
+            "   \"point\":{\"color\":{\"rgba\":[0,255,200,255]},\"pixelSize\":12},"
+            "   \"path\":{\"material\":{\"solidColor\":{\"color\":{\"rgbaf\":[0.2,0.8,1.0,1.0]}}},\"width\":2},"
+            "   \"properties\":{\"norad\":\"25544\"}},\n"
+            "  {\"id\":\"zone-1\",\"name\":\"Coverage Footprints\","
+            "   \"position\":{\"cartographicDegrees\":[-105.0, 40.0, 0]},"
+            "   \"ellipse\":{\"semiMajorAxis\":200000,\"semiMinorAxis\":120000,"
+            "     \"material\":{\"solidColor\":{\"color\":{\"rgba\":[255,100,0,120]}}}}}\n"
+            "]\n";
+
+        QVERIFY(CzmlParser::looksLikeCzml(sampleCzml, QStringLiteral("orbit.czml")));
+        const KmlDocument doc = CzmlParser::parseBytes(sampleCzml, QStringLiteral("orbit.czml"), QStringLiteral("cz"));
+        QVERIFY(doc.error.isEmpty());
+        QCOMPARE(doc.name, QStringLiteral("Orbital Demo"));
+        QCOMPARE(doc.placemarks.size(), 2);
+        QCOMPARE(doc.folders.size(), 1);
+        QCOMPARE(doc.folders.first().name, QStringLiteral("Satellites"));
+
+        const auto &iss = doc.placemarks[0];
+        QCOMPARE(iss.name, QStringLiteral("ISS"));
+        QCOMPARE(iss.folderPath, QStringLiteral("Satellites"));
+        QCOMPARE(iss.samples.size(), 2);
+        QCOMPARE(iss.lines.size(), 1);
+        QCOMPARE(iss.linkUrl, QStringLiteral("https://example.org/iss"));
+        QCOMPARE(iss.extendedData.value(QStringLiteral("norad")), QStringLiteral("25544"));
+        QCOMPARE(iss.style.iconColor, QColor(0, 255, 200, 255));
+
+        // Midpoint interpolation should land at lon=30, lat=25, alt=420000.
+        const qint64 midMs = QDateTime(QDate(2026, 11, 22), QTime(0, 30, 0), QTimeZone::utc()).toMSecsSinceEpoch();
+        const GeoCoord mid = iss.positionAt(midMs);
+        QVERIFY(std::abs(mid.lon - 30.0) < 0.01);
+        QVERIFY(std::abs(mid.lat - 25.0) < 0.01);
+        QVERIFY(std::abs(mid.alt - 420000.0) < 1.0);
+
+        const auto &zone = doc.placemarks[1];
+        QCOMPARE(zone.polygons.size(), 1);
+        QVERIFY(zone.polygons.first().outer.size() >= 48);
+
+        // Verify Backend auto-detects CZML and moves the satellite as timeline progresses.
+        QTemporaryDir dir;
+        TileManager tm(dir.filePath(QStringLiteral("tiles")));
+        FakeFilePicker picker;
+        Backend backend(&tm, &picker, false, dir.filePath(QStringLiteral("settings.json")));
+        QVERIFY(backend.ingestKmlBytesForFeed(QStringLiteral("czml-demo"), sampleCzml, QStringLiteral("orbit.czml")));
+        QVERIFY(backend.hasTimeline());
+        backend.setTimelineProgress(0.5);
+        QCOMPARE(backend.visiblePlacemarkList().first().anchor().lon, 30.0);
     }
 
     void themeFallsBack() {

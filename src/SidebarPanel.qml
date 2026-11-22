@@ -181,7 +181,7 @@ Rectangle {
             spacing: 6
 
             Text {
-                text: qsTr("KML / KMZ FEEDS")
+                text: qsTr("KML / CZML FEEDS")
                 color: "#80ffffff"
                 font.pixelSize: 10
                 font.weight: Font.Bold
@@ -292,7 +292,7 @@ Rectangle {
             TextField {
                 id: urlField
                 Layout.fillWidth: true
-                placeholderText: qsTr("Add KML / KMZ URL…")
+                placeholderText: qsTr("Add KML / KMZ / CZML URL…")
                 font.pixelSize: 12
                 Material.roundedScale: theme.radius
                 onAccepted: {

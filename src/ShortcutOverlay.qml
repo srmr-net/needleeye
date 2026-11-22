@@ -72,7 +72,7 @@ Item {
                     model: [
                         { key: "/", desc: qsTr("Jump to KML feature or place") },
                         { key: "L", desc: qsTr("Toggle feeds & layers sidebar") },
-                        { key: "O", desc: qsTr("Open local KML / KMZ file") },
+                        { key: "O", desc: qsTr("Open local KML / KMZ / CZML file") },
                         { key: "R", desc: qsTr("Refresh active KML feeds") },
                         { key: "Space", desc: qsTr("Play / pause timeline or refresh") },
                         { key: "[ / ]", desc: qsTr("Step timeline backward / forward") },

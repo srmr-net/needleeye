@@ -15,6 +15,11 @@ struct GeoCoord {
     double alt = 0.0;
 };
 
+struct TimedGeoCoord {
+    qint64 timeMs = 0;
+    GeoCoord coord;
+};
+
 struct KmlLookAt {
     bool valid = false;
     double lon = 0.0;
@@ -66,9 +71,12 @@ struct KmlPlacemark {
     KmlLookAt lookAt;
     QDateTime timeStart;
     QDateTime timeEnd;
+    QVector<TimedGeoCoord> samples;
 
     // Best representative coordinate for fly-to and picking.
     GeoCoord anchor() const;
+    // Interpolates sampled trajectory at timeMs (falls back to anchor()).
+    GeoCoord positionAt(qint64 timeMs) const;
 };
 
 struct KmlNetworkLink {

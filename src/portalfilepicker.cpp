@@ -65,7 +65,7 @@ PortalFilePicker::PortalFilePicker(QObject *parent) : FilePicker(parent) {
 
 void PortalFilePicker::openKmlFile(const QString &title, Callback callback) {
     openWithFilters(title, {
-        {tr("KML / KMZ files"), {QStringLiteral("*.kml"), QStringLiteral("*.kmz")}},
+        {tr("KML / KMZ / CZML files"), {QStringLiteral("*.kml"), QStringLiteral("*.kmz"), QStringLiteral("*.czml")}},
         {tr("All files"), {QStringLiteral("*")}}
     }, std::move(callback));
 }

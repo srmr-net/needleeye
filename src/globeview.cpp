@@ -40,6 +40,22 @@ double tileToLonRad(int z, int x) {
     return (-180.0 + 360.0 * static_cast<double>(x) / n) * kDegToRad;
 }
 
+double altitudeToSphereRadius(double altMeters, double minFloor) {
+    if (altMeters <= 200.0)
+        return minFloor;
+    return std::max(minFloor, 1.0 + std::clamp(altMeters, 0.0, 50000000.0) / 6371000.0);
+}
+
+bool isOccludedByEarth(const QVector3D &cam, const QVector3D &target) {
+    const QVector3D d = target - cam;
+    const float lenSq = d.lengthSquared();
+    if (lenSq < 1e-9f)
+        return false;
+    const float t = std::clamp(-QVector3D::dotProduct(cam, d) / lenSq, 0.0f, 1.0f);
+    const QVector3D closest = cam + d * t;
+    return closest.lengthSquared() < 0.994f;
+}
+
 struct KmlVertex {
     float x, y, z;
     float r, g, b, a;
@@ -951,17 +967,21 @@ private:
         const double lineRadius = 1.0030;
         const double pointRadius = 1.0045;
 
-        auto appendSubdividedSegment = [&](const GeoCoord &a, const GeoCoord &b, const QColor &col, double rad) {
+        auto appendSubdividedSegment = [&](const GeoCoord &a, const GeoCoord &b, const QColor &col, double minRad) {
             const double dLon = shortestLonDelta(a.lon, b.lon);
             const double dLat = b.lat - a.lat;
             const double span = std::hypot(dLon, dLat);
             const int steps = std::clamp(static_cast<int>(std::ceil(span / 2.5)), 1, 24);
             const float r = col.redF(), g = col.greenF(), bl = col.blueF(), al = std::max(0.45f, static_cast<float>(col.alphaF()));
+            const double radA = altitudeToSphereRadius(a.alt, minRad);
+            const double radB = altitudeToSphereRadius(b.alt, minRad);
             for (int s = 0; s < steps; ++s) {
                 const double t0 = static_cast<double>(s) / steps;
                 const double t1 = static_cast<double>(s + 1) / steps;
-                const QVector3D p0 = GlobeView::latLonToVec3(a.lat + dLat * t0, wrapLon(a.lon + dLon * t0), rad);
-                const QVector3D p1 = GlobeView::latLonToVec3(a.lat + dLat * t1, wrapLon(a.lon + dLon * t1), rad);
+                const double r0 = radA + (radB - radA) * t0;
+                const double r1 = radA + (radB - radA) * t1;
+                const QVector3D p0 = GlobeView::latLonToVec3(a.lat + dLat * t0, wrapLon(a.lon + dLon * t0), r0);
+                const QVector3D p1 = GlobeView::latLonToVec3(a.lat + dLat * t1, wrapLon(a.lon + dLon * t1), r1);
                 lineVerts.push_back({p0.x(), p0.y(), p0.z(), r, g, bl, al});
                 lineVerts.push_back({p1.x(), p1.y(), p1.z(), r, g, bl, al});
             }
@@ -1021,7 +1041,8 @@ private:
 
             // Point marker (also add an anchor marker if a polygon/line has no explicit point).
             const GeoCoord anchor = pm.anchor();
-            const QVector3D p = GlobeView::latLonToVec3(anchor.lat, anchor.lon, pointRadius);
+            const double markerRad = altitudeToSphereRadius(anchor.alt, pointRadius);
+            const QVector3D p = GlobeView::latLonToVec3(anchor.lat, anchor.lon, markerRad);
             QColor col = pm.style.iconColor;
             if (!col.isValid() || col.alpha() < 20)
                 col = m_snap.accent;
@@ -1477,10 +1498,11 @@ void GlobeView::updateSelectedMarkerProjection() {
     }
 
     const QVariantMap sel = m_backend->selectedPlacemarkVariant();
+    const double selRad = altitudeToSphereRadius(sel.value(QStringLiteral("alt")).toDouble(), 1.0045);
     const QVector3D world = latLonToVec3(sel.value(QStringLiteral("lat")).toDouble(),
-                                         sel.value(QStringLiteral("lon")).toDouble(), 1.0045);
+                                         sel.value(QStringLiteral("lon")).toDouble(), selRad);
     const QVector3D cam = cameraWorldPos();
-    if (QVector3D::dotProduct(world, cam) < 1.0f) {
+    if (isOccludedByEarth(cam, world)) {
         if (m_selectedMarkerVisible) {
             m_selectedMarkerVisible = false;
             emit selectedMarkerChanged();
@@ -1516,9 +1538,9 @@ QString GlobeView::pickPlacemarkAt(const QPointF &pos) const {
 
     for (const auto &pm : m_backend->visiblePlacemarkList()) {
         const GeoCoord a = pm.anchor();
-        const QVector3D world = latLonToVec3(a.lat, a.lon, 1.0045);
-        // Cull markers on the far hemisphere behind the horizon.
-        if (QVector3D::dotProduct(world, cam) < 0.995f)
+        const double markerRad = altitudeToSphereRadius(a.alt, 1.0045);
+        const QVector3D world = latLonToVec3(a.lat, a.lon, markerRad);
+        if (isOccludedByEarth(cam, world))
             continue;
         const QVector4D clip = vp * QVector4D(world, 1.0f);
         if (clip.w() <= 0.0f)
