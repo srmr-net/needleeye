@@ -815,6 +815,21 @@ Item {
                     }
                 }
 
+                // Day / Night solar terminator toggle.
+                RowLayout {
+                    Layout.fillWidth: true
+                    ColumnLayout {
+                        Layout.fillWidth: true
+                        spacing: 2
+                        Text { text: qsTr("Day / Night Shading"); color: theme.foreground; font.pixelSize: 13 }
+                        Text { text: qsTr("Real-time solar terminator and twilight lighting, synced to timeline (D)"); color: "#80ffffff"; font.pixelSize: 11 }
+                    }
+                    Switch {
+                        checked: backend.dayNightEnabled
+                        onToggled: backend.dayNightEnabled = checked
+                    }
+                }
+
                 Rectangle { Layout.fillWidth: true; Layout.preferredHeight: 1; color: "#22ffffff" }
 
                 Text {

@@ -9,6 +9,7 @@
 #include <QVariantList>
 #include <QVariantMap>
 #include <QVector>
+#include <QVector3D>
 
 #include "kmlparser.h"
 #include "portalfilepicker.h"
@@ -42,6 +43,7 @@ class Backend : public QObject {
     Q_PROPERTY(double terrainExaggeration READ terrainExaggeration WRITE setTerrainExaggeration NOTIFY settingsChanged)
     Q_PROPERTY(bool graticuleEnabled READ graticuleEnabled WRITE setGraticuleEnabled NOTIFY settingsChanged)
     Q_PROPERTY(bool atmosphereEnabled READ atmosphereEnabled WRITE setAtmosphereEnabled NOTIFY settingsChanged)
+    Q_PROPERTY(bool dayNightEnabled READ dayNightEnabled WRITE setDayNightEnabled NOTIFY settingsChanged)
     Q_PROPERTY(bool autoRefreshEnabled READ autoRefreshEnabled WRITE setAutoRefreshEnabled NOTIFY settingsChanged)
     Q_PROPERTY(int autoRefreshMinutes READ autoRefreshMinutes WRITE setAutoRefreshMinutes NOTIFY settingsChanged)
     Q_PROPERTY(QString cacheSummary READ cacheSummary NOTIFY cacheStatsChanged)
@@ -92,6 +94,13 @@ public:
 
     bool atmosphereEnabled() const { return m_atmosphereEnabled; }
     void setAtmosphereEnabled(bool enabled);
+
+    bool dayNightEnabled() const { return m_dayNightEnabled; }
+    void setDayNightEnabled(bool enabled);
+    QVector3D sunDirection() const;
+    static QVector3D computeSunDirection(const QDateTime &utcTime,
+                                         double *outSubsolarLatDeg = nullptr,
+                                         double *outSubsolarLonDeg = nullptr);
 
     bool autoRefreshEnabled() const { return m_autoRefreshEnabled; }
     void setAutoRefreshEnabled(bool enabled);
@@ -221,6 +230,7 @@ private:
     double m_terrainExaggeration = 1.0;
     bool m_graticuleEnabled = true;
     bool m_atmosphereEnabled = true;
+    bool m_dayNightEnabled = false;
     bool m_autoRefreshEnabled = true;
     int m_autoRefreshMinutes = 5;
     QString m_cacheSummary;

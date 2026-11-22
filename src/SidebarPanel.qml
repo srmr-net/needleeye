@@ -149,6 +149,28 @@ Rectangle {
                     onClicked: backend.graticuleEnabled = !backend.graticuleEnabled
                 }
             }
+
+            Rectangle {
+                Layout.fillWidth: true
+                Layout.preferredHeight: 26
+                radius: Math.min(4, theme.radius)
+                color: backend.dayNightEnabled ? "#26ffffff" : "#10ffffff"
+                border.width: 1
+                border.color: backend.dayNightEnabled ? theme.accent : "#20ffffff"
+
+                Text {
+                    anchors.centerIn: parent
+                    text: qsTr("Sun (D)")
+                    color: backend.dayNightEnabled ? theme.accent : "#99ffffff"
+                    font.pixelSize: 11
+                }
+
+                MouseArea {
+                    anchors.fill: parent
+                    cursorShape: Qt.PointingHandCursor
+                    onClicked: backend.dayNightEnabled = !backend.dayNightEnabled
+                }
+            }
         }
 
         Rectangle { Layout.fillWidth: true; Layout.preferredHeight: 1; color: "#1cffffff" }

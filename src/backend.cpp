@@ -124,6 +124,9 @@ Backend::Backend(TileManager *tileManager, FilePicker *filePicker,
 
     m_autoRefreshTimer.setInterval(60000);
     connect(&m_autoRefreshTimer, &QTimer::timeout, this, [this]() {
+        // Keep the live solar terminator advancing smoothly every minute.
+        if (m_dayNightEnabled && !timelineActive())
+            emit settingsChanged();
         if (!m_autoRefreshEnabled)
             return;
         const QDateTime now = QDateTime::currentDateTimeUtc();
@@ -168,6 +171,8 @@ void Backend::loadSettings() {
         m_graticuleEnabled = root.value(QStringLiteral("graticuleEnabled")).toBool(true);
     if (root.contains(QStringLiteral("atmosphereEnabled")))
         m_atmosphereEnabled = root.value(QStringLiteral("atmosphereEnabled")).toBool(true);
+    if (root.contains(QStringLiteral("dayNightEnabled")))
+        m_dayNightEnabled = root.value(QStringLiteral("dayNightEnabled")).toBool(false);
     if (root.contains(QStringLiteral("autoRefreshEnabled")))
         m_autoRefreshEnabled = root.value(QStringLiteral("autoRefreshEnabled")).toBool(true);
     if (root.contains(QStringLiteral("autoRefreshMinutes")))
@@ -230,6 +235,7 @@ void Backend::saveSettings() const {
     root.insert(QStringLiteral("terrainExaggeration"), m_terrainExaggeration);
     root.insert(QStringLiteral("graticuleEnabled"), m_graticuleEnabled);
     root.insert(QStringLiteral("atmosphereEnabled"), m_atmosphereEnabled);
+    root.insert(QStringLiteral("dayNightEnabled"), m_dayNightEnabled);
     root.insert(QStringLiteral("autoRefreshEnabled"), m_autoRefreshEnabled);
     root.insert(QStringLiteral("autoRefreshMinutes"), m_autoRefreshMinutes);
 
@@ -668,6 +674,60 @@ void Backend::setAtmosphereEnabled(bool enabled) {
     m_atmosphereEnabled = enabled;
     saveSettings();
     emit settingsChanged();
+}
+
+void Backend::setDayNightEnabled(bool enabled) {
+    if (m_dayNightEnabled == enabled)
+        return;
+    m_dayNightEnabled = enabled;
+    saveSettings();
+    emit settingsChanged();
+}
+
+QVector3D Backend::computeSunDirection(const QDateTime &utcTime,
+                                       double *outSubsolarLatDeg,
+                                       double *outSubsolarLonDeg) {
+    // Low-precision astronomical solar position (accurate within ~0.01 deg).
+    const double unixSec = static_cast<double>(utcTime.toMSecsSinceEpoch()) / 1000.0;
+    const double jd = unixSec / 86400.0 + 2440587.5;
+    const double n = jd - 2451545.0;
+
+    auto norm360 = [](double deg) {
+        deg = std::fmod(deg, 360.0);
+        return deg < 0.0 ? deg + 360.0 : deg;
+    };
+
+    const double meanLon = norm360(280.460 + 0.9856474 * n);
+    const double meanAnomRad = norm360(357.528 + 0.9856003 * n) * M_PI / 180.0;
+    const double eclLonRad = norm360(meanLon + 1.915 * std::sin(meanAnomRad) + 0.020 * std::sin(2.0 * meanAnomRad)) * M_PI / 180.0;
+    const double obliqRad = (23.439 - 0.0000004 * n) * M_PI / 180.0;
+
+    const double sinDecl = std::sin(obliqRad) * std::sin(eclLonRad);
+    const double declRad = std::asin(std::clamp(sinDecl, -1.0, 1.0));
+    const double raRad = std::atan2(std::cos(obliqRad) * std::sin(eclLonRad), std::cos(eclLonRad));
+
+    const double gmstDeg = norm360(280.46061837 + 360.98564736629 * n);
+    double subLonDeg = std::fmod(raRad * 180.0 / M_PI - gmstDeg + 540.0, 360.0) - 180.0;
+    const double subLatDeg = declRad * 180.0 / M_PI;
+
+    if (outSubsolarLatDeg)
+        *outSubsolarLatDeg = subLatDeg;
+    if (outSubsolarLonDeg)
+        *outSubsolarLonDeg = subLonDeg;
+
+    const double lonRad = subLonDeg * M_PI / 180.0;
+    return QVector3D(
+        static_cast<float>(std::cos(declRad) * std::sin(lonRad)),
+        static_cast<float>(std::sin(declRad)),
+        static_cast<float>(std::cos(declRad) * std::cos(lonRad))).normalized();
+}
+
+QVector3D Backend::sunDirection() const {
+    if (timelineActive()) {
+        const qint64 cur = m_timeMinMs + static_cast<qint64>((m_timeMaxMs - m_timeMinMs) * m_timelineProgress);
+        return computeSunDirection(QDateTime::fromMSecsSinceEpoch(cur, QTimeZone::utc()));
+    }
+    return computeSunDirection(QDateTime::currentDateTimeUtc());
 }
 
 void Backend::setAutoRefreshEnabled(bool enabled) {

@@ -59,6 +59,8 @@ struct RenderSnapshot {
     double terrainExaggeration = 1.0;
     bool graticuleEnabled = true;
     bool atmosphereEnabled = true;
+    bool dayNightEnabled = false;
+    QVector3D sunDir = QVector3D(0.0f, 0.0f, 1.0f);
     QColor accent = QColor("#FFD60A");
     QColor background = QColor("#0e0e10");
     QMatrix4x4 view;
@@ -170,6 +172,8 @@ public:
             m_snap.terrainExaggeration = b->terrainExaggeration();
             m_snap.graticuleEnabled = b->graticuleEnabled();
             m_snap.atmosphereEnabled = b->atmosphereEnabled();
+            m_snap.dayNightEnabled = b->dayNightEnabled();
+            m_snap.sunDir = b->sunDirection();
             if (m_snap.tileManager)
                 m_snap.cacheRevision = m_snap.tileManager->cacheRevision();
 
@@ -358,18 +362,36 @@ private:
             uniform vec3 uCamDir;
             uniform vec3 uAccent;
             uniform float uTerrainTint;
+            uniform int uDayNightEnabled;
+            uniform vec3 uSunDir;
             out vec4 fragColor;
 
             void main() {
-                vec3 col = texture(uColorTex, vColorUv).rgb;
-                float ndv = clamp(dot(normalize(vNormal), normalize(uCamDir)), 0.0, 1.0);
-                float shade = 0.72 + 0.28 * pow(ndv, 0.45);
-                col *= shade;
-                // Subtle alpine relief highlight when 3D terrain is active.
-                col += vec3(0.06, 0.07, 0.08) * vElevNorm * uTerrainTint;
+                vec3 baseCol = texture(uColorTex, vColorUv).rgb;
+                vec3 n = normalize(vNormal);
+                float ndv = clamp(dot(n, normalize(uCamDir)), 0.0, 1.0);
+                vec3 col;
+
+                if (uDayNightEnabled != 0) {
+                    float ndl = dot(n, normalize(uSunDir));
+                    float dayFactor = smoothstep(-0.14, 0.16, ndl);
+                    float sunShade = 0.78 + 0.27 * pow(max(ndl, 0.0), 0.55);
+                    vec3 dayCol = baseCol * sunShade + vec3(0.06, 0.07, 0.08) * vElevNorm * uTerrainTint;
+                    vec3 nightCol = baseCol * vec3(0.16, 0.20, 0.30);
+                    col = mix(nightCol, dayCol, dayFactor);
+                    float twilight = exp(-pow((ndl + 0.01) / 0.095, 2.0));
+                    col += vec3(0.14, 0.065, 0.03) * twilight;
+                } else {
+                    float shade = 0.72 + 0.28 * pow(ndv, 0.45);
+                    col = baseCol * shade + vec3(0.06, 0.07, 0.08) * vElevNorm * uTerrainTint;
+                }
+
                 // Delicate atmospheric limb tint near horizon.
                 float rim = pow(1.0 - ndv, 3.2);
-                col = mix(col, mix(vec3(0.18, 0.42, 0.68), uAccent, 0.35), rim * 0.28);
+                float rimScale = uDayNightEnabled != 0
+                    ? (0.10 + 0.22 * smoothstep(-0.22, 0.30, dot(n, normalize(uSunDir))))
+                    : 0.28;
+                col = mix(col, mix(vec3(0.18, 0.42, 0.68), uAccent, 0.35), rim * rimScale);
                 fragColor = vec4(col, 1.0);
             }
         )glsl");
@@ -398,6 +420,8 @@ private:
             uniform sampler2D uColorTex;
             uniform vec3 uCamDir;
             uniform vec3 uAccent;
+            uniform int uDayNightEnabled;
+            uniform vec3 uSunDir;
             out vec4 fragColor;
 
             const float PI = 3.14159265359;
@@ -405,20 +429,31 @@ private:
             const float TWO_PI = 6.28318530718;
 
             void main() {
-                if (uUseEquirectTex == 0) {
-                    fragColor = vCol;
-                    return;
-                }
                 vec3 n = normalize(vNormal);
-                float lat = asin(clamp(n.y, -1.0, 1.0));
-                float lon = atan(n.x, n.z);
-                vec2 uv = vec2((lon + PI) / TWO_PI, (HALF_PI - lat) / PI);
-                vec3 col = texture(uColorTex, uv).rgb;
+                vec3 baseCol = vCol.rgb;
+                if (uUseEquirectTex != 0) {
+                    float lat = asin(clamp(n.y, -1.0, 1.0));
+                    float lon = atan(n.x, n.z);
+                    vec2 uv = vec2((lon + PI) / TWO_PI, (HALF_PI - lat) / PI);
+                    baseCol = texture(uColorTex, uv).rgb;
+                }
                 float ndv = clamp(dot(n, normalize(uCamDir)), 0.0, 1.0);
-                float shade = 0.72 + 0.28 * pow(ndv, 0.45);
-                col *= shade;
-                float rim = pow(1.0 - ndv, 3.2);
-                col = mix(col, mix(vec3(0.18, 0.42, 0.68), uAccent, 0.35), rim * 0.28);
+                vec3 col;
+                if (uDayNightEnabled != 0) {
+                    float ndl = dot(n, normalize(uSunDir));
+                    float dayFactor = smoothstep(-0.14, 0.16, ndl);
+                    float sunShade = 0.78 + 0.27 * pow(max(ndl, 0.0), 0.55);
+                    col = mix(baseCol * vec3(0.16, 0.20, 0.30), baseCol * sunShade, dayFactor);
+                    float twilight = exp(-pow((ndl + 0.01) / 0.095, 2.0));
+                    col += vec3(0.14, 0.065, 0.03) * twilight;
+                } else {
+                    float shade = 0.72 + 0.28 * pow(ndv, 0.45);
+                    col = baseCol * shade;
+                }
+                if (uUseEquirectTex != 0) {
+                    float rim = pow(1.0 - ndv, 3.2);
+                    col = mix(col, mix(vec3(0.18, 0.42, 0.68), uAccent, 0.35), rim * 0.24);
+                }
                 fragColor = vec4(col, 1.0);
             }
         )glsl");
@@ -514,13 +549,18 @@ private:
             in vec3 vWorldPos;
             uniform vec3 uCamPos;
             uniform vec3 uAccent;
+            uniform int uDayNightEnabled;
+            uniform vec3 uSunDir;
             out vec4 fragColor;
             void main() {
                 vec3 n = normalize(vWorldPos);
                 vec3 v = normalize(uCamPos - vWorldPos);
                 float rim = pow(clamp(1.0 - abs(dot(n, v)), 0.0, 1.0), 3.6);
                 vec3 tint = mix(vec3(0.16, 0.45, 0.78), uAccent, 0.38);
-                fragColor = vec4(tint, rim * 0.52);
+                float sunMod = uDayNightEnabled != 0
+                    ? (0.22 + 0.78 * smoothstep(-0.25, 0.35, dot(n, normalize(uSunDir))))
+                    : 1.0;
+                fragColor = vec4(tint, rim * 0.52 * sunMod);
             }
         )glsl");
         m_atmoProg.link();
@@ -814,6 +854,8 @@ private:
             : 0.0f;
         m_tileProg.setUniformValue("uTerrainScale", terrainScale);
         m_tileProg.setUniformValue("uTerrainTint", m_snap.terrainEnabled ? 1.0f : 0.0f);
+        m_tileProg.setUniformValue("uDayNightEnabled", m_snap.dayNightEnabled ? 1 : 0);
+        m_tileProg.setUniformValue("uSunDir", m_snap.sunDir);
         m_tileProg.setUniformValue("uColorTex", 0);
         m_tileProg.setUniformValue("uDemTex", 1);
 
@@ -869,6 +911,8 @@ private:
         m_polarProg.setUniformValue("uUseEquirectTex", useEquirect ? 1 : 0);
         m_polarProg.setUniformValue("uCamDir", m_snap.camPos.normalized());
         m_polarProg.setUniformValue("uAccent", QVector3D(m_snap.accent.redF(), m_snap.accent.greenF(), m_snap.accent.blueF()));
+        m_polarProg.setUniformValue("uDayNightEnabled", m_snap.dayNightEnabled ? 1 : 0);
+        m_polarProg.setUniformValue("uSunDir", m_snap.sunDir);
         m_polarProg.setUniformValue("uColorTex", 0);
         if (useEquirect) {
             glActiveTexture(GL_TEXTURE0);
@@ -1077,6 +1121,8 @@ private:
         m_atmoProg.setUniformValue("uVp", vp);
         m_atmoProg.setUniformValue("uCamPos", m_snap.camPos);
         m_atmoProg.setUniformValue("uAccent", QVector3D(m_snap.accent.redF(), m_snap.accent.greenF(), m_snap.accent.blueF()));
+        m_atmoProg.setUniformValue("uDayNightEnabled", m_snap.dayNightEnabled ? 1 : 0);
+        m_atmoProg.setUniformValue("uSunDir", m_snap.sunDir);
         glBindVertexArray(m_atmoVao);
         glDrawElements(GL_TRIANGLES, m_atmoIndexCount, GL_UNSIGNED_INT, nullptr);
         glBindVertexArray(0);
@@ -1155,6 +1201,10 @@ void GlobeView::setController(Backend *backend) {
         connect(m_backend, &Backend::selectionChanged, this, [this]() {
             updateSelectedMarkerProjection();
             update();
+        });
+        connect(m_backend, &Backend::timelineChanged, this, [this]() {
+            if (m_backend->dayNightEnabled())
+                update();
         });
         connect(m_backend, &Backend::flyToRequested, this, &GlobeView::flyTo);
         if (auto *tm = m_backend->tileManager()) {

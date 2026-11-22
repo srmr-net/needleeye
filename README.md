@@ -32,7 +32,7 @@ You can also pass local `.kml`/`.kmz` files or feed URLs directly on launch:
 | `[` / `]` | Step timeline backward / forward |
 | `1` – `9` | Switch enabled base maps |
 | `,` / `Ctrl+,` | Open settings & base map manager |
-| `T` / `G` | Toggle 3D terrain elevation / graticule grid |
+| `T` / `G` / `D` | Toggle 3D terrain elevation / graticule grid / day-night shading |
 | `Arrows` | Pan globe (`Shift + Arrows` to tilt horizon & rotate heading) |
 | `+` / `-` | Zoom in / out |
 | `N` / `0` | Reset north / home orbital view |

@@ -72,6 +72,7 @@ ApplicationWindow {
     Shortcut { sequence: "9"; context: Qt.ApplicationShortcut; enabled: win.globeShortcutsEnabled; onActivated: backend.selectBaseMapBySlot(8) }
     Shortcut { sequence: "T"; context: Qt.ApplicationShortcut; enabled: win.globeShortcutsEnabled; onActivated: backend.terrainEnabled = !backend.terrainEnabled }
     Shortcut { sequence: "G"; context: Qt.ApplicationShortcut; enabled: win.globeShortcutsEnabled; onActivated: backend.graticuleEnabled = !backend.graticuleEnabled }
+    Shortcut { sequence: "D"; context: Qt.ApplicationShortcut; enabled: win.globeShortcutsEnabled; onActivated: backend.dayNightEnabled = !backend.dayNightEnabled }
     Shortcut { sequence: "N"; context: Qt.ApplicationShortcut; enabled: win.globeShortcutsEnabled; onActivated: globe.resetNorth() }
     Shortcut { sequence: "0"; context: Qt.ApplicationShortcut; enabled: win.globeShortcutsEnabled; onActivated: globe.resetHome() }
     Shortcut { sequence: "+"; context: Qt.ApplicationShortcut; enabled: win.globeShortcutsEnabled; onActivated: globe.zoomBy(0.74) }

@@ -1,6 +1,7 @@
 #include <QDir>
 #include <QFile>
 #include <QTemporaryDir>
+#include <QTimeZone>
 #include <QtTest>
 #include <zip.h>
 
@@ -288,6 +289,39 @@ private slots:
         Backend reloaded(&tm, &picker, false, settingsFile);
         QCOMPARE(reloaded.baseLayerName(), QStringLiteral("Local Blue Marble"));
         QCOMPARE(tm.projectionForLayer(reloaded.baseLayer()), MapProjection::SingleMercator);
+    }
+
+    void sunDirectionMatchesSolsticesAndEquinox() {
+        double lat = 0.0, lon = 0.0;
+
+        // June solstice at 12:00 UTC: Sun near Tropic of Cancer (+23.4 deg) & Prime Meridian (~0 deg).
+        const QDateTime juneSolstice(QDate(2026, 6, 21), QTime(12, 0, 0), QTimeZone::utc());
+        const QVector3D juneDir = Backend::computeSunDirection(juneSolstice, &lat, &lon);
+        QVERIFY(std::abs(juneDir.length() - 1.0f) < 1e-4f);
+        QVERIFY2(lat > 22.5 && lat < 24.0, qPrintable(QString("Unexpected June lat: %1").arg(lat)));
+        QVERIFY2(std::abs(lon) < 3.0, qPrintable(QString("Unexpected June noon lon: %1").arg(lon)));
+
+        // December solstice at 00:00 UTC: Sun near Tropic of Capricorn (-23.4 deg) & antimeridian (~±180 deg).
+        const QDateTime decSolstice(QDate(2026, 12, 21), QTime(0, 0, 0), QTimeZone::utc());
+        Backend::computeSunDirection(decSolstice, &lat, &lon);
+        QVERIFY2(lat < -22.5 && lat > -24.0, qPrintable(QString("Unexpected Dec lat: %1").arg(lat)));
+        QVERIFY2(std::abs(lon) > 175.0, qPrintable(QString("Unexpected Dec midnight lon: %1").arg(lon)));
+
+        // March equinox at 12:00 UTC: Sun near equator (~0 deg).
+        const QDateTime marchEquinox(QDate(2026, 3, 20), QTime(12, 0, 0), QTimeZone::utc());
+        Backend::computeSunDirection(marchEquinox, &lat, &lon);
+        QVERIFY2(std::abs(lat) < 1.5, qPrintable(QString("Unexpected Equinox lat: %1").arg(lat)));
+
+        // Verify dayNightEnabled persists cleanly.
+        QTemporaryDir dir;
+        const QString settingsFile = dir.filePath(QStringLiteral("settings.json"));
+        TileManager tm(dir.filePath(QStringLiteral("tiles")));
+        FakeFilePicker picker;
+        Backend b1(&tm, &picker, false, settingsFile);
+        QCOMPARE(b1.dayNightEnabled(), false);
+        b1.setDayNightEnabled(true);
+        Backend b2(&tm, &picker, false, settingsFile);
+        QCOMPARE(b2.dayNightEnabled(), true);
     }
 
     void themeFallsBack() {

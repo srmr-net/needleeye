@@ -78,7 +78,7 @@ Item {
                         { key: "[ / ]", desc: qsTr("Step timeline backward / forward") },
                         { key: "1 – 9", desc: qsTr("Switch enabled base maps") },
                         { key: ", / Ctrl+,", desc: qsTr("Open settings & base map manager") },
-                        { key: "T / G", desc: qsTr("Toggle 3D terrain / graticule grid") },
+                        { key: "T / G / D", desc: qsTr("Toggle 3D terrain / grid / day-night") },
                         { key: "Arrows", desc: qsTr("Pan globe (Shift + Arrows: tilt / rotate)") },
                         { key: "+ / -", desc: qsTr("Zoom in / out (or scroll wheel)") },
                         { key: "N / 0", desc: qsTr("Reset north / home orbit") },
