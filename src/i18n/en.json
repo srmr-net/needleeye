@@ -1,5 +1,6 @@
 {
   "%n features": { "one": "%n feature", "other": "%n features" },
   "%n features loaded": { "one": "%n feature loaded", "other": "%n features loaded" },
-  "Opened %1 (%n features)": { "one": "Opened %1 (%n feature)", "other": "Opened %1 (%n features)" }
+  "Opened %1 (%n features)": { "one": "Opened %1 (%n feature)", "other": "Opened %1 (%n features)" },
+  "%1 (%n tiles)": { "one": "%1 (%n tile)", "other": "%1 (%n tiles)" }
 }

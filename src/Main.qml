@@ -20,8 +20,19 @@ ApplicationWindow {
 
     property bool sidebarVisible: true
     property bool searchVisible: false
+    property bool settingsVisible: false
     property bool helpVisible: false
-    property bool textInputFocused: searchOverlay.active || sidebarPanel.urlInputFocused
+    property bool textInputFocused: searchOverlay.active || sidebarPanel.urlInputFocused || settingsOverlay.inputFocused
+    property bool globeShortcutsEnabled: !win.textInputFocused && !win.settingsVisible && !win.searchVisible && !win.helpVisible
+
+    function openSettings(tabIndex) {
+        win.helpVisible = false
+        win.searchVisible = false
+        if (tabIndex !== undefined)
+            settingsOverlay.currentTab = tabIndex
+        win.settingsVisible = true
+        settingsOverlay.focusOverlay()
+    }
 
     function formatCoord(value, posHem, negHem) {
         var _lang = translator.language
@@ -38,41 +49,50 @@ ApplicationWindow {
         return Math.round(km * 1000).toLocaleString(Qt.locale(), 'f', 0) + " m"
     }
 
-    // Global keyboard shortcuts (disabled when typing into a text field).
-    Shortcut { sequence: "?"; context: Qt.ApplicationShortcut; enabled: !win.textInputFocused; onActivated: win.helpVisible = !win.helpVisible }
+    // Global keyboard shortcuts (globe navigation & map shortcuts pause while overlays are open).
+    Shortcut { sequence: "?"; context: Qt.ApplicationShortcut; enabled: !win.textInputFocused && !win.settingsVisible; onActivated: win.helpVisible = !win.helpVisible }
+    Shortcut { sequence: ","; context: Qt.ApplicationShortcut; enabled: !win.textInputFocused; onActivated: win.settingsVisible ? (win.settingsVisible = false) : win.openSettings() }
+    Shortcut { sequence: "Ctrl+,"; context: Qt.ApplicationShortcut; onActivated: win.settingsVisible ? (win.settingsVisible = false) : win.openSettings() }
     Shortcut { sequence: "Q"; context: Qt.ApplicationShortcut; enabled: !win.textInputFocused; onActivated: Qt.quit() }
-    Shortcut { sequence: "/"; context: Qt.ApplicationShortcut; enabled: !win.textInputFocused; onActivated: { win.helpVisible = false; win.searchVisible = true; searchOverlay.focusInput() } }
-    Shortcut { sequence: "L"; context: Qt.ApplicationShortcut; enabled: !win.textInputFocused; onActivated: win.sidebarVisible = !win.sidebarVisible }
-    Shortcut { sequence: "O"; context: Qt.ApplicationShortcut; enabled: !win.textInputFocused; onActivated: backend.openLocalFileDialog() }
-    Shortcut { sequence: "R"; context: Qt.ApplicationShortcut; enabled: !win.textInputFocused; onActivated: backend.refreshAllFeeds() }
-    Shortcut { sequence: "Space"; context: Qt.ApplicationShortcut; enabled: !win.textInputFocused; onActivated: backend.primaryAction() }
-    Shortcut { sequence: "["; context: Qt.ApplicationShortcut; enabled: !win.textInputFocused; onActivated: backend.stepTimeline(-0.04) }
-    Shortcut { sequence: "]"; context: Qt.ApplicationShortcut; enabled: !win.textInputFocused; onActivated: backend.stepTimeline(0.04) }
-    Shortcut { sequence: "1"; context: Qt.ApplicationShortcut; enabled: !win.textInputFocused; onActivated: backend.baseLayer = 0 }
-    Shortcut { sequence: "2"; context: Qt.ApplicationShortcut; enabled: !win.textInputFocused; onActivated: backend.baseLayer = 1 }
-    Shortcut { sequence: "3"; context: Qt.ApplicationShortcut; enabled: !win.textInputFocused; onActivated: backend.baseLayer = 2 }
-    Shortcut { sequence: "4"; context: Qt.ApplicationShortcut; enabled: !win.textInputFocused; onActivated: backend.baseLayer = 3 }
-    Shortcut { sequence: "T"; context: Qt.ApplicationShortcut; enabled: !win.textInputFocused; onActivated: backend.terrainEnabled = !backend.terrainEnabled }
-    Shortcut { sequence: "G"; context: Qt.ApplicationShortcut; enabled: !win.textInputFocused; onActivated: backend.graticuleEnabled = !backend.graticuleEnabled }
-    Shortcut { sequence: "N"; context: Qt.ApplicationShortcut; enabled: !win.textInputFocused; onActivated: globe.resetNorth() }
-    Shortcut { sequence: "0"; context: Qt.ApplicationShortcut; enabled: !win.textInputFocused; onActivated: globe.resetHome() }
-    Shortcut { sequence: "+"; context: Qt.ApplicationShortcut; enabled: !win.textInputFocused; onActivated: globe.zoomBy(0.74) }
-    Shortcut { sequence: "="; context: Qt.ApplicationShortcut; enabled: !win.textInputFocused; onActivated: globe.zoomBy(0.74) }
-    Shortcut { sequence: "-"; context: Qt.ApplicationShortcut; enabled: !win.textInputFocused; onActivated: globe.zoomBy(1.35) }
-    Shortcut { sequence: "Up"; context: Qt.ApplicationShortcut; enabled: !win.textInputFocused; onActivated: globe.panBy(12, 0) }
-    Shortcut { sequence: "Down"; context: Qt.ApplicationShortcut; enabled: !win.textInputFocused; onActivated: globe.panBy(-12, 0) }
-    Shortcut { sequence: "Left"; context: Qt.ApplicationShortcut; enabled: !win.textInputFocused; onActivated: globe.panBy(0, -16) }
-    Shortcut { sequence: "Right"; context: Qt.ApplicationShortcut; enabled: !win.textInputFocused; onActivated: globe.panBy(0, 16) }
-    Shortcut { sequence: "Shift+Up"; context: Qt.ApplicationShortcut; enabled: !win.textInputFocused; onActivated: globe.tiltBy(8) }
-    Shortcut { sequence: "Shift+Down"; context: Qt.ApplicationShortcut; enabled: !win.textInputFocused; onActivated: globe.tiltBy(-8) }
-    Shortcut { sequence: "Shift+Left"; context: Qt.ApplicationShortcut; enabled: !win.textInputFocused; onActivated: globe.rotateHeadingBy(-15) }
-    Shortcut { sequence: "Shift+Right"; context: Qt.ApplicationShortcut; enabled: !win.textInputFocused; onActivated: globe.rotateHeadingBy(15) }
+    Shortcut { sequence: "/"; context: Qt.ApplicationShortcut; enabled: win.globeShortcutsEnabled; onActivated: { win.searchVisible = true; searchOverlay.focusInput() } }
+    Shortcut { sequence: "L"; context: Qt.ApplicationShortcut; enabled: win.globeShortcutsEnabled; onActivated: win.sidebarVisible = !win.sidebarVisible }
+    Shortcut { sequence: "O"; context: Qt.ApplicationShortcut; enabled: win.globeShortcutsEnabled; onActivated: backend.openLocalFileDialog() }
+    Shortcut { sequence: "R"; context: Qt.ApplicationShortcut; enabled: win.globeShortcutsEnabled; onActivated: backend.refreshAllFeeds() }
+    Shortcut { sequence: "Space"; context: Qt.ApplicationShortcut; enabled: win.globeShortcutsEnabled; onActivated: backend.primaryAction() }
+    Shortcut { sequence: "["; context: Qt.ApplicationShortcut; enabled: win.globeShortcutsEnabled; onActivated: backend.stepTimeline(-0.04) }
+    Shortcut { sequence: "]"; context: Qt.ApplicationShortcut; enabled: win.globeShortcutsEnabled; onActivated: backend.stepTimeline(0.04) }
+    Shortcut { sequence: "1"; context: Qt.ApplicationShortcut; enabled: win.globeShortcutsEnabled; onActivated: backend.selectBaseMapBySlot(0) }
+    Shortcut { sequence: "2"; context: Qt.ApplicationShortcut; enabled: win.globeShortcutsEnabled; onActivated: backend.selectBaseMapBySlot(1) }
+    Shortcut { sequence: "3"; context: Qt.ApplicationShortcut; enabled: win.globeShortcutsEnabled; onActivated: backend.selectBaseMapBySlot(2) }
+    Shortcut { sequence: "4"; context: Qt.ApplicationShortcut; enabled: win.globeShortcutsEnabled; onActivated: backend.selectBaseMapBySlot(3) }
+    Shortcut { sequence: "5"; context: Qt.ApplicationShortcut; enabled: win.globeShortcutsEnabled; onActivated: backend.selectBaseMapBySlot(4) }
+    Shortcut { sequence: "6"; context: Qt.ApplicationShortcut; enabled: win.globeShortcutsEnabled; onActivated: backend.selectBaseMapBySlot(5) }
+    Shortcut { sequence: "7"; context: Qt.ApplicationShortcut; enabled: win.globeShortcutsEnabled; onActivated: backend.selectBaseMapBySlot(6) }
+    Shortcut { sequence: "8"; context: Qt.ApplicationShortcut; enabled: win.globeShortcutsEnabled; onActivated: backend.selectBaseMapBySlot(7) }
+    Shortcut { sequence: "9"; context: Qt.ApplicationShortcut; enabled: win.globeShortcutsEnabled; onActivated: backend.selectBaseMapBySlot(8) }
+    Shortcut { sequence: "T"; context: Qt.ApplicationShortcut; enabled: win.globeShortcutsEnabled; onActivated: backend.terrainEnabled = !backend.terrainEnabled }
+    Shortcut { sequence: "G"; context: Qt.ApplicationShortcut; enabled: win.globeShortcutsEnabled; onActivated: backend.graticuleEnabled = !backend.graticuleEnabled }
+    Shortcut { sequence: "N"; context: Qt.ApplicationShortcut; enabled: win.globeShortcutsEnabled; onActivated: globe.resetNorth() }
+    Shortcut { sequence: "0"; context: Qt.ApplicationShortcut; enabled: win.globeShortcutsEnabled; onActivated: globe.resetHome() }
+    Shortcut { sequence: "+"; context: Qt.ApplicationShortcut; enabled: win.globeShortcutsEnabled; onActivated: globe.zoomBy(0.74) }
+    Shortcut { sequence: "="; context: Qt.ApplicationShortcut; enabled: win.globeShortcutsEnabled; onActivated: globe.zoomBy(0.74) }
+    Shortcut { sequence: "-"; context: Qt.ApplicationShortcut; enabled: win.globeShortcutsEnabled; onActivated: globe.zoomBy(1.35) }
+    Shortcut { sequence: "Up"; context: Qt.ApplicationShortcut; enabled: win.globeShortcutsEnabled; onActivated: globe.panBy(12, 0) }
+    Shortcut { sequence: "Down"; context: Qt.ApplicationShortcut; enabled: win.globeShortcutsEnabled; onActivated: globe.panBy(-12, 0) }
+    Shortcut { sequence: "Left"; context: Qt.ApplicationShortcut; enabled: win.globeShortcutsEnabled; onActivated: globe.panBy(0, -16) }
+    Shortcut { sequence: "Right"; context: Qt.ApplicationShortcut; enabled: win.globeShortcutsEnabled; onActivated: globe.panBy(0, 16) }
+    Shortcut { sequence: "Shift+Up"; context: Qt.ApplicationShortcut; enabled: win.globeShortcutsEnabled; onActivated: globe.tiltBy(8) }
+    Shortcut { sequence: "Shift+Down"; context: Qt.ApplicationShortcut; enabled: win.globeShortcutsEnabled; onActivated: globe.tiltBy(-8) }
+    Shortcut { sequence: "Shift+Left"; context: Qt.ApplicationShortcut; enabled: win.globeShortcutsEnabled; onActivated: globe.rotateHeadingBy(-15) }
+    Shortcut { sequence: "Shift+Right"; context: Qt.ApplicationShortcut; enabled: win.globeShortcutsEnabled; onActivated: globe.rotateHeadingBy(15) }
     Shortcut {
         sequence: "Escape"
         context: Qt.ApplicationShortcut
         onActivated: {
             if (win.searchVisible) {
                 win.searchVisible = false
+            } else if (win.settingsVisible) {
+                win.settingsVisible = false
             } else if (win.helpVisible) {
                 win.helpVisible = false
             } else if (backend.hasSelection) {
@@ -94,6 +114,7 @@ ApplicationWindow {
         GlobeView {
             id: globe
             anchors.fill: parent
+            enabled: !win.settingsVisible && !win.searchVisible && !win.helpVisible
             controller: backend
             accentColor: theme.accent
             backgroundColor: theme.background
@@ -137,6 +158,12 @@ ApplicationWindow {
             color: Qt.rgba(0.06, 0.06, 0.08, 0.86)
             border.width: 1
             border.color: "#24ffffff"
+
+            MouseArea {
+                anchors.fill: parent
+                hoverEnabled: true
+                onWheel: function(wheel) { wheel.accepted = true }
+            }
 
             RowLayout {
                 anchors.fill: parent
@@ -225,7 +252,7 @@ ApplicationWindow {
                     MouseArea {
                         anchors.fill: parent
                         cursorShape: Qt.PointingHandCursor
-                        onClicked: backend.baseLayer = (backend.baseLayer + 1) % 4
+                        onClicked: backend.cycleBaseMap()
                     }
                 }
 
@@ -287,6 +314,41 @@ ApplicationWindow {
                         hoverEnabled: true
                         cursorShape: Qt.PointingHandCursor
                         onClicked: win.sidebarVisible = !win.sidebarVisible
+                    }
+                }
+
+                // Settings button (,).
+                Rectangle {
+                    Layout.preferredHeight: 24
+                    Layout.preferredWidth: settingsBtnRow.implicitWidth + 14
+                    radius: Math.min(4, theme.radius)
+                    color: win.settingsVisible ? theme.accent : (settingsBtnMa.containsMouse ? "#28ffffff" : "#14ffffff")
+
+                    Row {
+                        id: settingsBtnRow
+                        anchors.centerIn: parent
+                        spacing: 6
+                        Text {
+                            text: qsTr("Settings")
+                            color: win.settingsVisible ? theme.accentForeground : theme.foreground
+                            font.pixelSize: 11
+                            font.weight: win.settingsVisible ? Font.DemiBold : Font.Normal
+                        }
+                        Text {
+                            text: ","
+                            color: win.settingsVisible ? theme.accentForeground : theme.accent
+                            font.family: "monospace"
+                            font.pixelSize: 11
+                            font.weight: Font.Bold
+                        }
+                    }
+
+                    MouseArea {
+                        id: settingsBtnMa
+                        anchors.fill: parent
+                        hoverEnabled: true
+                        cursorShape: Qt.PointingHandCursor
+                        onClicked: win.settingsVisible ? (win.settingsVisible = false) : win.openSettings()
                     }
                 }
 
@@ -381,6 +443,7 @@ ApplicationWindow {
             anchors.bottomMargin: 12
             width: 310
             z: 10
+            onManageBaseMapsRequested: win.openSettings(0)
         }
 
         // Right Selected Placemark Inspector.
@@ -414,6 +477,18 @@ ApplicationWindow {
             z: 10
         }
 
+        // Subtle base map attribution watermark.
+        Text {
+            visible: backend.baseLayerAttribution !== "" && !timelineBar.visible
+            anchors.right: inspectorPanel.visible ? inspectorPanel.left : parent.right
+            anchors.bottom: parent.bottom
+            anchors.margins: 10
+            text: backend.baseLayerAttribution
+            color: "#66ffffff"
+            font.pixelSize: 10
+            z: 5
+        }
+
         // Command / Jump Search Overlay (/).
         SearchOverlay {
             id: searchOverlay
@@ -421,6 +496,15 @@ ApplicationWindow {
             anchors.fill: parent
             z: 30
             onCloseRequested: win.searchVisible = false
+        }
+
+        // Settings & Base Map Manager Overlay (,).
+        SettingsOverlay {
+            id: settingsOverlay
+            active: win.settingsVisible
+            anchors.fill: parent
+            z: 35
+            onCloseRequested: win.settingsVisible = false
         }
 
         // Keyboard Shortcut Reference Overlay (?).

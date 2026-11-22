@@ -32,10 +32,19 @@ struct FeedEntry {
 class Backend : public QObject {
     Q_OBJECT
     Q_PROPERTY(int baseLayer READ baseLayer WRITE setBaseLayer NOTIFY settingsChanged)
+    Q_PROPERTY(QString baseLayerId READ baseLayerId NOTIFY settingsChanged)
     Q_PROPERTY(QString baseLayerName READ baseLayerName NOTIFY settingsChanged)
+    Q_PROPERTY(QString baseLayerAttribution READ baseLayerAttribution NOTIFY settingsChanged)
+    Q_PROPERTY(QVariantList baseMaps READ baseMapsVariant NOTIFY baseMapsChanged)
+    Q_PROPERTY(QVariantList enabledBaseMaps READ enabledBaseMapsVariant NOTIFY baseMapsChanged)
+
     Q_PROPERTY(bool terrainEnabled READ terrainEnabled WRITE setTerrainEnabled NOTIFY settingsChanged)
+    Q_PROPERTY(double terrainExaggeration READ terrainExaggeration WRITE setTerrainExaggeration NOTIFY settingsChanged)
     Q_PROPERTY(bool graticuleEnabled READ graticuleEnabled WRITE setGraticuleEnabled NOTIFY settingsChanged)
     Q_PROPERTY(bool atmosphereEnabled READ atmosphereEnabled WRITE setAtmosphereEnabled NOTIFY settingsChanged)
+    Q_PROPERTY(bool autoRefreshEnabled READ autoRefreshEnabled WRITE setAutoRefreshEnabled NOTIFY settingsChanged)
+    Q_PROPERTY(int autoRefreshMinutes READ autoRefreshMinutes WRITE setAutoRefreshMinutes NOTIFY settingsChanged)
+    Q_PROPERTY(QString cacheSummary READ cacheSummary NOTIFY cacheStatsChanged)
 
     Q_PROPERTY(QVariantList feeds READ feedsVariant NOTIFY feedsChanged)
     Q_PROPERTY(QVariantList folders READ foldersVariant NOTIFY foldersChanged)
@@ -60,22 +69,36 @@ class Backend : public QObject {
 
 public:
     explicit Backend(TileManager *tileManager = nullptr, FilePicker *filePicker = nullptr,
-                     bool autoLoadDefaultFeeds = true, QObject *parent = nullptr);
+                     bool autoLoadDefaultFeeds = true, const QString &settingsPath = {},
+                     QObject *parent = nullptr);
 
     TileManager *tileManager() const { return m_tileManager; }
 
-    int baseLayer() const { return m_baseLayer; }
-    void setBaseLayer(int layer);
+    int baseLayer() const { return m_activeBaseMapUid; }
+    void setBaseLayer(int layerUid);
+    QString baseLayerId() const;
     QString baseLayerName() const;
+    QString baseLayerAttribution() const;
+    QVariantList baseMapsVariant() const;
+    QVariantList enabledBaseMapsVariant() const;
 
     bool terrainEnabled() const { return m_terrainEnabled; }
     void setTerrainEnabled(bool enabled);
+    double terrainExaggeration() const { return m_terrainExaggeration; }
+    void setTerrainExaggeration(double value);
 
     bool graticuleEnabled() const { return m_graticuleEnabled; }
     void setGraticuleEnabled(bool enabled);
 
     bool atmosphereEnabled() const { return m_atmosphereEnabled; }
     void setAtmosphereEnabled(bool enabled);
+
+    bool autoRefreshEnabled() const { return m_autoRefreshEnabled; }
+    void setAutoRefreshEnabled(bool enabled);
+    int autoRefreshMinutes() const { return m_autoRefreshMinutes; }
+    void setAutoRefreshMinutes(int minutes);
+
+    QString cacheSummary() const { return m_cacheSummary; }
 
     QVariantList feedsVariant() const;
     QVariantList foldersVariant() const;
@@ -106,6 +129,23 @@ public:
     const QVector<KmlPlacemark> &visiblePlacemarkList() const { return m_visiblePlacemarks; }
     quint64 kmlRevision() const { return m_kmlRevision; }
 
+    // Base map management actions.
+    Q_INVOKABLE void selectBaseMap(const QString &mapId);
+    Q_INVOKABLE void selectBaseMapBySlot(int slotIndex);
+    Q_INVOKABLE void cycleBaseMap();
+    Q_INVOKABLE bool setBaseMapEnabled(const QString &mapId, bool enabled);
+    Q_INVOKABLE bool moveBaseMap(const QString &mapId, int delta);
+    Q_INVOKABLE QString addCustomBaseMap(const QString &name, const QString &urlTemplate,
+                                         int maxZoom = 18, const QString &attribution = {});
+    Q_INVOKABLE QString updateBaseMap(const QString &mapId, const QString &name,
+                                      const QString &urlTemplate, int maxZoom,
+                                      const QString &attribution);
+    Q_INVOKABLE bool removeBaseMap(const QString &mapId);
+    Q_INVOKABLE void resetBaseMapsToDefaults();
+    Q_INVOKABLE void refreshCacheStats();
+    Q_INVOKABLE void clearTileCache();
+
+    // KML & globe actions.
     Q_INVOKABLE void primaryAction();
     Q_INVOKABLE void toggleFeed(const QString &feedId);
     Q_INVOKABLE void refreshAllFeeds();
@@ -125,9 +165,12 @@ public:
 
     // Exposed for tests.
     bool ingestKmlBytesForFeed(const QString &feedId, const QByteArray &data, const QString &sourceName = {});
+    static QString validateBaseMapInput(const QString &name, const QString &urlTemplate, int maxZoom);
 
 signals:
     void settingsChanged();
+    void baseMapsChanged();
+    void cacheStatsChanged();
     void feedsChanged();
     void foldersChanged();
     void selectionChanged();
@@ -139,6 +182,14 @@ signals:
     void flyToRequested(double lat, double lon, double altitudeRadii);
 
 private:
+    void loadSettings();
+    void saveSettings() const;
+    void syncBaseMapsToTileManager();
+    void ensureValidActiveBaseMap();
+    int findBaseMapIndexById(const QString &mapId) const;
+    int findBaseMapIndexByUid(int uid) const;
+    QString makeUniqueBaseMapId(const QString &name) const;
+
     void setupDefaultFeeds();
     void fetchUrlForFeed(const QString &feedId, const QString &url, int depth, QSet<QString> visited);
     void rebuildVisiblePlacemarks();
@@ -156,10 +207,18 @@ private:
     bool m_ownsFilePicker = false;
     QNetworkAccessManager m_nam;
 
-    int m_baseLayer = static_cast<int>(BaseLayer::DarkMatter);
+    QString m_settingsPath;
+    QVector<BaseMapSpec> m_baseMaps;
+    int m_nextBaseMapUid = 100;
+    int m_activeBaseMapUid = 0;
+
     bool m_terrainEnabled = true;
+    double m_terrainExaggeration = 1.0;
     bool m_graticuleEnabled = true;
     bool m_atmosphereEnabled = true;
+    bool m_autoRefreshEnabled = true;
+    int m_autoRefreshMinutes = 5;
+    QString m_cacheSummary;
 
     QVector<FeedEntry> m_feeds;
     QHash<QString, bool> m_folderVisibility; // "feedId|folderPath" -> visible

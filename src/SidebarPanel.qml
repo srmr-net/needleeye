@@ -15,6 +15,13 @@ Rectangle {
     Material.roundedScale: theme.radius
 
     property alias urlInputFocused: urlField.activeFocus
+    signal manageBaseMapsRequested()
+
+    MouseArea {
+        anchors.fill: parent
+        hoverEnabled: true
+        onWheel: function(wheel) { wheel.accepted = true }
+    }
 
     ColumnLayout {
         anchors.fill: parent
@@ -22,12 +29,37 @@ Rectangle {
         spacing: 10
 
         // Base map selector.
-        Text {
-            text: qsTr("BASE MAP")
-            color: "#80ffffff"
-            font.pixelSize: 10
-            font.weight: Font.Bold
-            font.letterSpacing: 1.4
+        RowLayout {
+            Layout.fillWidth: true
+            spacing: 6
+
+            Text {
+                text: qsTr("BASE MAP")
+                color: "#80ffffff"
+                font.pixelSize: 10
+                font.weight: Font.Bold
+                font.letterSpacing: 1.4
+                Layout.fillWidth: true
+            }
+
+            Rectangle {
+                Layout.preferredHeight: 20
+                Layout.preferredWidth: manageBtnTxt.implicitWidth + 12
+                radius: Math.min(4, theme.radius)
+                color: "#14ffffff"
+                Text {
+                    id: manageBtnTxt
+                    anchors.centerIn: parent
+                    text: qsTr("Manage (,)")
+                    color: "#99ffffff"
+                    font.pixelSize: 10
+                }
+                MouseArea {
+                    anchors.fill: parent
+                    cursorShape: Qt.PointingHandCursor
+                    onClicked: panel.manageBaseMapsRequested()
+                }
+            }
         }
 
         GridLayout {
@@ -37,33 +69,33 @@ Rectangle {
             columnSpacing: 6
 
             Repeater {
-                model: [
-                    { idx: 0, label: qsTr("1 · Dark") },
-                    { idx: 1, label: qsTr("2 · Satellite") },
-                    { idx: 2, label: qsTr("3 · Sentinel-2") },
-                    { idx: 3, label: qsTr("4 · OSM") }
-                ]
+                model: backend.enabledBaseMaps
 
                 Rectangle {
                     Layout.fillWidth: true
                     Layout.preferredHeight: 28
                     radius: Math.min(4, theme.radius)
-                    color: backend.baseLayer === modelData.idx ? theme.accent : "#16ffffff"
+                    color: modelData.active ? theme.accent : "#16ffffff"
                     border.width: 1
-                    border.color: backend.baseLayer === modelData.idx ? theme.accent : "#20ffffff"
+                    border.color: modelData.active ? theme.accent : "#20ffffff"
 
                     Text {
-                        anchors.centerIn: parent
-                        text: modelData.label
-                        color: backend.baseLayer === modelData.idx ? theme.accentForeground : theme.foreground
+                        anchors.fill: parent
+                        anchors.leftMargin: 8
+                        anchors.rightMargin: 8
+                        horizontalAlignment: Text.AlignHCenter
+                        verticalAlignment: Text.AlignVCenter
+                        elide: Text.ElideRight
+                        text: (modelData.slot <= 9 ? (modelData.slot + " · ") : "") + modelData.name
+                        color: modelData.active ? theme.accentForeground : theme.foreground
                         font.pixelSize: 11
-                        font.weight: backend.baseLayer === modelData.idx ? Font.DemiBold : Font.Normal
+                        font.weight: modelData.active ? Font.DemiBold : Font.Normal
                     }
 
                     MouseArea {
                         anchors.fill: parent
                         cursorShape: Qt.PointingHandCursor
-                        onClicked: backend.baseLayer = modelData.idx
+                        onClicked: backend.selectBaseMap(modelData.id)
                     }
                 }
             }

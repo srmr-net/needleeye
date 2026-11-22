@@ -1,12 +1,14 @@
 #include "tilemanager.h"
 
 #include <QDir>
+#include <QDirIterator>
 #include <QFile>
 #include <QFileInfo>
 #include <QMutexLocker>
 #include <QNetworkReply>
 #include <QNetworkRequest>
 #include <QStandardPaths>
+#include <algorithm>
 #include <cmath>
 
 TileManager::TileManager(const QString &cacheDir, QObject *parent)
@@ -16,46 +18,155 @@ TileManager::TileManager(const QString &cacheDir, QObject *parent)
                      : cacheDir),
       m_memCache(512) {
     QDir().mkpath(m_cacheDir);
+    setBaseMaps(defaultBaseMaps());
 }
 
-QString TileManager::layerSlug(int layer) {
-    switch (static_cast<BaseLayer>(layer)) {
-    case BaseLayer::DarkMatter:    return QStringLiteral("dark");
-    case BaseLayer::EsriSatellite: return QStringLiteral("esri");
-    case BaseLayer::Sentinel2:     return QStringLiteral("sentinel2");
-    case BaseLayer::OpenStreetMap: return QStringLiteral("osm");
-    case BaseLayer::ElevationDem:  return QStringLiteral("terrarium");
-    }
-    return QStringLiteral("dark");
+QVector<BaseMapSpec> TileManager::defaultBaseMaps() {
+    return {
+        {0, QStringLiteral("dark-matter"), QStringLiteral("Dark"),
+         QStringLiteral("https://basemaps.cartocdn.com/dark_all/{z}/{x}/{y}.png"),
+         QStringLiteral("© OpenStreetMap, © CARTO"), 18, true, true},
+        {1, QStringLiteral("esri-satellite"), QStringLiteral("Satellite"),
+         QStringLiteral("https://services.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}"),
+         QStringLiteral("© Esri, Maxar, Earthstar Geographics"), 17, true, true},
+        {2, QStringLiteral("sentinel-2"), QStringLiteral("Sentinel-2"),
+         QStringLiteral("https://tiles.maps.eox.at/wmts/1.0.0/s2cloudless-2021_3857/default/GoogleMapsCompatible/{z}/{y}/{x}.jpg"),
+         QStringLiteral("Sentinel-2 cloudless by EOX (CC BY 4.0)"), 13, true, true},
+        {3, QStringLiteral("osm"), QStringLiteral("OSM"),
+         QStringLiteral("https://tile.openstreetmap.org/{z}/{x}/{y}.png"),
+         QStringLiteral("© OpenStreetMap contributors"), 18, true, true},
+        {4, QStringLiteral("opentopomap"), QStringLiteral("OpenTopoMap"),
+         QStringLiteral("https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png"),
+         QStringLiteral("© OpenTopoMap (CC-BY-SA)"), 17, false, true},
+        {5, QStringLiteral("carto-voyager"), QStringLiteral("Voyager"),
+         QStringLiteral("https://basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}.png"),
+         QStringLiteral("© OpenStreetMap, © CARTO"), 18, false, true},
+        {6, QStringLiteral("esri-topo"), QStringLiteral("Esri Topo"),
+         QStringLiteral("https://services.arcgisonline.com/ArcGIS/rest/services/World_Topo_Map/MapServer/tile/{z}/{y}/{x}"),
+         QStringLiteral("© Esri, HERE, Garmin, OpenStreetMap"), 17, false, true},
+    };
 }
 
-int TileManager::maxZoomForLayer(int layer) {
-    switch (static_cast<BaseLayer>(layer)) {
-    case BaseLayer::DarkMatter:    return 18;
-    case BaseLayer::EsriSatellite: return 17;
-    case BaseLayer::Sentinel2:     return 13;
-    case BaseLayer::OpenStreetMap: return 18;
-    case BaseLayer::ElevationDem:  return 12;
+void TileManager::setBaseMaps(const QVector<BaseMapSpec> &maps) {
+    QMutexLocker lock(&m_cacheMutex);
+    m_layers.clear();
+    for (const auto &m : maps)
+        m_layers.insert(m.uid, m);
+}
+
+void TileManager::invalidateLayerCache(int layerUid) {
+    QString slug;
+    {
+        QMutexLocker lock(&m_cacheMutex);
+        slug = m_layers.contains(layerUid) ? m_layers.value(layerUid).id : QString::number(layerUid);
+        const auto keys = m_memCache.keys();
+        for (const auto &k : keys) {
+            if (k.layer == layerUid)
+                m_memCache.remove(k);
+        }
     }
+
+    // Clear failed state for this layer so edited URLs retry immediately.
+    for (auto it = m_failed.begin(); it != m_failed.end(); ) {
+        if (it->layer == layerUid)
+            it = m_failed.erase(it);
+        else
+            ++it;
+    }
+
+    if (!slug.isEmpty())
+        QDir(m_cacheDir + QStringLiteral("/") + slug).removeRecursively();
+
+    ++m_cacheRevision;
+    emit cacheCleared();
+}
+
+void TileManager::clearAllCache() {
+    {
+        QMutexLocker lock(&m_cacheMutex);
+        m_memCache.clear();
+    }
+    m_failed.clear();
+    m_queue.clear();
+    m_queuedSet.clear();
+
+    QDir dir(m_cacheDir);
+    if (dir.exists()) {
+        const auto entries = dir.entryList(QDir::NoDotAndDotDot | QDir::AllEntries);
+        for (const QString &entry : entries) {
+            const QString full = dir.filePath(entry);
+            QFileInfo fi(full);
+            if (fi.isDir())
+                QDir(full).removeRecursively();
+            else
+                QFile::remove(full);
+        }
+    }
+
+    ++m_cacheRevision;
+    emit cacheCleared();
+}
+
+CacheStats TileManager::diskCacheStats() const {
+    CacheStats stats;
+    QDirIterator it(m_cacheDir, QDir::Files, QDirIterator::Subdirectories);
+    while (it.hasNext()) {
+        it.next();
+        stats.bytes += it.fileInfo().size();
+        ++stats.fileCount;
+    }
+    return stats;
+}
+
+QString TileManager::expandUrlTemplate(const QString &tpl, int z, int x, int y) {
+    const int n = 1 << z;
+    const int tmsY = (n - 1) - y;
+    static const char subdomains[3] = {'a', 'b', 'c'};
+    const QChar sub(subdomains[(std::abs(x) + std::abs(y)) % 3]);
+
+    QString url = tpl;
+    url.replace(QStringLiteral("{z}"), QString::number(z));
+    url.replace(QStringLiteral("{x}"), QString::number(x));
+    url.replace(QStringLiteral("{-y}"), QString::number(tmsY));
+    url.replace(QStringLiteral("{y}"), QString::number(y));
+    url.replace(QStringLiteral("{s}"), QString(sub));
+    return url;
+}
+
+QString TileManager::layerSlug(int layer) const {
+    if (layer == ElevationDemLayer)
+        return QStringLiteral("terrarium");
+    QMutexLocker lock(&m_cacheMutex);
+    auto it = m_layers.constFind(layer);
+    if (it != m_layers.cend() && !it.value().id.isEmpty())
+        return it.value().id;
+    return QStringLiteral("layer_%1").arg(layer);
+}
+
+int TileManager::maxZoomForLayer(int layer) const {
+    if (layer == ElevationDemLayer)
+        return 12;
+    QMutexLocker lock(&m_cacheMutex);
+    auto it = m_layers.constFind(layer);
+    if (it != m_layers.cend())
+        return std::clamp(it.value().maxZoom, 1, 20);
     return 16;
 }
 
-QString TileManager::tileUrl(int layer, int z, int x, int y) {
-    switch (static_cast<BaseLayer>(layer)) {
-    case BaseLayer::DarkMatter:
-        return QStringLiteral("https://basemaps.cartocdn.com/dark_all/%1/%2/%3.png").arg(z).arg(x).arg(y);
-    case BaseLayer::EsriSatellite:
-        return QStringLiteral("https://services.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/%1/%2/%3")
-            .arg(z).arg(y).arg(x);
-    case BaseLayer::Sentinel2:
-        return QStringLiteral("https://tiles.maps.eox.at/wmts/1.0.0/s2cloudless-2021_3857/default/GoogleMapsCompatible/%1/%2/%3.jpg")
-            .arg(z).arg(y).arg(x);
-    case BaseLayer::OpenStreetMap:
-        return QStringLiteral("https://tile.openstreetmap.org/%1/%2/%3.png").arg(z).arg(x).arg(y);
-    case BaseLayer::ElevationDem:
-        return QStringLiteral("https://s3.amazonaws.com/elevation-tiles-prod/terrarium/%1/%2/%3.png").arg(z).arg(x).arg(y);
+QString TileManager::tileUrl(int layer, int z, int x, int y) const {
+    if (layer == ElevationDemLayer) {
+        return QStringLiteral("https://s3.amazonaws.com/elevation-tiles-prod/terrarium/%1/%2/%3.png")
+            .arg(z).arg(x).arg(y);
     }
-    return {};
+    QString tpl;
+    {
+        QMutexLocker lock(&m_cacheMutex);
+        auto it = m_layers.constFind(layer);
+        if (it == m_layers.cend())
+            return {};
+        tpl = it.value().urlTemplate;
+    }
+    return expandUrlTemplate(tpl, z, x, y);
 }
 
 QString TileManager::diskPath(const TileKey &key) const {
@@ -99,7 +210,6 @@ QImage TileManager::requestTile(int layer, int z, int x, int y) {
     }
 
     if (!m_inFlight.contains(key) && !m_queuedSet.contains(key) && !m_failed.contains(key)) {
-        // Cap queue length by prioritizing the most recent camera view.
         if (m_queue.size() > 128) {
             const TileKey dropped = m_queue.dequeue();
             m_queuedSet.remove(dropped);
@@ -186,7 +296,7 @@ double TileManager::sampleElevationMeters(double latDeg, double lonDeg, int pref
         const int tx = ((static_cast<int>(std::floor(fx)) % (1 << z)) + (1 << z)) % (1 << z);
         const int ty = std::clamp(static_cast<int>(std::floor(fy)), 0, (1 << z) - 1);
 
-        const QImage tile = cachedTile(static_cast<int>(BaseLayer::ElevationDem), z, tx, ty);
+        const QImage tile = cachedTile(ElevationDemLayer, z, tx, ty);
         if (tile.isNull())
             continue;
 

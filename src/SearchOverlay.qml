@@ -22,7 +22,9 @@ Item {
         color: "#88000000"
         MouseArea {
             anchors.fill: parent
+            hoverEnabled: true
             onClicked: overlay.closeRequested()
+            onWheel: function(wheel) { wheel.accepted = true }
         }
     }
 
@@ -40,6 +42,12 @@ Item {
         Material.theme: Material.Dark
         Material.accent: theme.accent
         Material.roundedScale: theme.radius
+
+        MouseArea {
+            anchors.fill: parent
+            hoverEnabled: true
+            onWheel: function(wheel) { wheel.accepted = true }
+        }
 
         ColumnLayout {
             id: searchCol

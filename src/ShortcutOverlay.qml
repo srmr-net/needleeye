@@ -12,7 +12,9 @@ Item {
         color: "#aa000000"
         MouseArea {
             anchors.fill: parent
+            hoverEnabled: true
             onClicked: overlay.closeRequested()
+            onWheel: function(wheel) { wheel.accepted = true }
         }
     }
 
@@ -28,6 +30,12 @@ Item {
         Material.theme: Material.Dark
         Material.accent: theme.accent
         Material.roundedScale: theme.radius
+
+        MouseArea {
+            anchors.fill: parent
+            hoverEnabled: true
+            onWheel: function(wheel) { wheel.accepted = true }
+        }
 
         ColumnLayout {
             id: contentCol
@@ -68,7 +76,8 @@ Item {
                         { key: "R", desc: qsTr("Refresh active KML feeds") },
                         { key: "Space", desc: qsTr("Play / pause timeline or refresh") },
                         { key: "[ / ]", desc: qsTr("Step timeline backward / forward") },
-                        { key: "1 – 4", desc: qsTr("Switch Dark / Satellite / Sentinel / OSM") },
+                        { key: "1 – 9", desc: qsTr("Switch enabled base maps") },
+                        { key: ", / Ctrl+,", desc: qsTr("Open settings & base map manager") },
                         { key: "T / G", desc: qsTr("Toggle 3D terrain / graticule grid") },
                         { key: "Arrows", desc: qsTr("Pan globe (Shift + Arrows: tilt / rotate)") },
                         { key: "+ / -", desc: qsTr("Zoom in / out (or scroll wheel)") },

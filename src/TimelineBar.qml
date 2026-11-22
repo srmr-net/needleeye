@@ -14,6 +14,12 @@ Rectangle {
     Material.accent: theme.accent
     Material.roundedScale: theme.radius
 
+    MouseArea {
+        anchors.fill: parent
+        hoverEnabled: true
+        onWheel: function(wheel) { wheel.accepted = true }
+    }
+
     RowLayout {
         anchors.fill: parent
         anchors.leftMargin: 12

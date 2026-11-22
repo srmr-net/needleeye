@@ -55,6 +55,7 @@ struct MarkerVertex {
 struct RenderSnapshot {
     int baseLayer = 0;
     bool terrainEnabled = true;
+    double terrainExaggeration = 1.0;
     bool graticuleEnabled = true;
     bool atmosphereEnabled = true;
     QColor accent = QColor("#FFD60A");
@@ -67,6 +68,7 @@ struct RenderSnapshot {
     double camLon = 10.0;
     float devicePixelRatio = 1.0f;
 
+    quint64 cacheRevision = 0;
     quint64 kmlRevision = 0;
     QString selectedId;
     QVector<KmlPlacemark> placemarks;
@@ -161,8 +163,11 @@ public:
             m_snap.tileManager = b->tileManager();
             m_snap.baseLayer = b->baseLayer();
             m_snap.terrainEnabled = b->terrainEnabled();
+            m_snap.terrainExaggeration = b->terrainExaggeration();
             m_snap.graticuleEnabled = b->graticuleEnabled();
             m_snap.atmosphereEnabled = b->atmosphereEnabled();
+            if (m_snap.tileManager)
+                m_snap.cacheRevision = m_snap.tileManager->cacheRevision();
 
             if (b->kmlRevision() != m_uploadedKmlRevision || b->selectedPlacemarkId() != m_uploadedSelectedId) {
                 m_snap.kmlRevision = b->kmlRevision();
@@ -176,6 +181,13 @@ public:
     void render() override {
         if (!m_initialized)
             initGl();
+
+        if (m_snap.cacheRevision != m_uploadedCacheRevision) {
+            for (auto it = m_tileTextures.begin(); it != m_tileTextures.end(); ++it)
+                glDeleteTextures(1, &it.value().tex);
+            m_tileTextures.clear();
+            m_uploadedCacheRevision = m_snap.cacheRevision;
+        }
 
         if (m_kmlDirty) {
             rebuildKmlBuffers();
@@ -656,7 +668,7 @@ private:
         }
 
         uvRect = QVector4D(0.0f, 0.0f, 1.0f, 1.0f);
-        return (layer == static_cast<int>(BaseLayer::ElevationDem)) ? m_flatDemTex : m_fallbackTex;
+        return (layer == TileManager::ElevationDemLayer) ? m_flatDemTex : m_fallbackTex;
     }
 
     GLuint uploadTexture(const QImage &img) {
@@ -690,7 +702,8 @@ private:
 
     void renderTiles(const QMatrix4x4 &vp) {
         ++m_frameCounter;
-        const int maxZoom = std::min(TileManager::maxZoomForLayer(m_snap.baseLayer),
+        const int layerMaxZoom = m_snap.tileManager ? m_snap.tileManager->maxZoomForLayer(m_snap.baseLayer) : 16;
+        const int maxZoom = std::min(layerMaxZoom,
                                      std::clamp(static_cast<int>(std::ceil(std::log2(3.5 / std::max(0.0005, m_snap.camAltitude)))) + 1, 2, 16));
 
         QVector<VisibleTile> tiles;
@@ -704,9 +717,9 @@ private:
         m_tileProg.setUniformValue("uVp", vp);
         m_tileProg.setUniformValue("uCamDir", m_snap.camPos.normalized());
         m_tileProg.setUniformValue("uAccent", QVector3D(m_snap.accent.redF(), m_snap.accent.greenF(), m_snap.accent.blueF()));
-        // Exaggerate elevation gently from orbit and dial down close to ground.
+        // Exaggerate elevation gently from orbit and scale by user exaggeration preference.
         const float terrainScale = m_snap.terrainEnabled
-            ? static_cast<float>(std::clamp(1.6 + m_snap.camAltitude * 2.2, 1.6, 5.5))
+            ? static_cast<float>(std::clamp(1.6 + m_snap.camAltitude * 2.2, 1.6, 5.5) * m_snap.terrainExaggeration)
             : 0.0f;
         m_tileProg.setUniformValue("uTerrainScale", terrainScale);
         m_tileProg.setUniformValue("uTerrainTint", m_snap.terrainEnabled ? 1.0f : 0.0f);
@@ -723,7 +736,7 @@ private:
             if (m_snap.terrainEnabled) {
                 const int demZ = std::min(t.z, 10);
                 const int shift = t.z - demZ;
-                demTex = ensureTileTexture(static_cast<int>(BaseLayer::ElevationDem), demZ, t.x >> shift, t.y >> shift, demUv);
+                demTex = ensureTileTexture(TileManager::ElevationDemLayer, demZ, t.x >> shift, t.y >> shift, demUv);
                 if (shift > 0) {
                     const float subScale = 1.0f / static_cast<float>(1 << shift);
                     const float subU = static_cast<float>(t.x - ((t.x >> shift) << shift)) * subScale;
@@ -998,6 +1011,7 @@ private:
     GLuint m_kmlMarkerVao = 0, m_kmlMarkerVbo = 0;
     int m_kmlMarkerCount = 0;
 
+    quint64 m_uploadedCacheRevision = 0;
     quint64 m_uploadedKmlRevision = 0;
     QString m_uploadedSelectedId;
     bool m_kmlDirty = true;
@@ -1043,6 +1057,10 @@ void GlobeView::setController(Backend *backend) {
         connect(m_backend, &Backend::flyToRequested, this, &GlobeView::flyTo);
         if (auto *tm = m_backend->tileManager()) {
             connect(tm, &TileManager::tileReady, this, [this]() { update(); });
+            connect(tm, &TileManager::cacheCleared, this, [this]() {
+                requestNeededTilesForCamera();
+                update();
+            });
         }
         requestNeededTilesForCamera();
     }
@@ -1375,7 +1393,7 @@ void GlobeView::requestNeededTilesForCamera() {
     const QVector3D camPos = cameraWorldPos();
 
     const int layer = m_backend->baseLayer();
-    const int maxZoom = std::min(TileManager::maxZoomForLayer(layer),
+    const int maxZoom = std::min(tm->maxZoomForLayer(layer),
                                  std::clamp(static_cast<int>(std::ceil(std::log2(3.5 / std::max(0.0005, m_altitude)))) + 1, 2, 16));
 
     // Always ensure zoom 1 root tiles are available as instant fallback.
@@ -1395,7 +1413,7 @@ void GlobeView::requestNeededTilesForCamera() {
         if (m_backend->terrainEnabled()) {
             const int demZ = std::min(t.z, 10);
             const int shift = t.z - demZ;
-            tm->requestTile(static_cast<int>(BaseLayer::ElevationDem), demZ, t.x >> shift, t.y >> shift);
+            tm->requestTile(TileManager::ElevationDemLayer, demZ, t.x >> shift, t.y >> shift);
         }
     }
 }

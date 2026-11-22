@@ -159,7 +159,7 @@ private slots:
         QTemporaryDir cacheDir;
         TileManager tm(cacheDir.path());
         FakeFilePicker picker;
-        Backend backend(&tm, &picker, false);
+        Backend backend(&tm, &picker, false, cacheDir.filePath(QStringLiteral("settings.json")));
 
         QVERIFY(backend.ingestKmlBytesForFeed(QStringLiteral("local-test"), sampleTimelineKml(), QStringLiteral("Quakes")));
         QCOMPARE(backend.visiblePlacemarks(), 2);
@@ -177,6 +177,73 @@ private slots:
         backend.updateSearch(QStringLiteral("Beta"));
         QVERIFY(!backend.searchResults().isEmpty());
         QCOMPARE(backend.searchResults().first().toMap().value(QStringLiteral("title")).toString(), QStringLiteral("Quake Beta"));
+    }
+
+    void tileUrlExpandsXyzTmsAndSubdomain() {
+        QCOMPARE(TileManager::expandUrlTemplate(QStringLiteral("https://{s}.tiles.test/{z}/{x}/{y}.png"), 3, 2, 1),
+                 QStringLiteral("https://a.tiles.test/3/2/1.png"));
+        // For z=3 (8 rows), y=1 -> tmsY = 7 - 1 = 6; (2+1)%3 == 0 ('a'), (2+2)%3 == 1 ('b')
+        QCOMPARE(TileManager::expandUrlTemplate(QStringLiteral("https://{s}.tms.test/{z}/{x}/{-y}.png"), 3, 2, 2),
+                 QStringLiteral("https://b.tms.test/3/2/5.png"));
+    }
+
+    void baseMapManagementValidatesPersistsAndClearsCache() {
+        QTemporaryDir dir;
+        const QString settingsFile = dir.filePath(QStringLiteral("settings.json"));
+        TileManager tm(dir.filePath(QStringLiteral("tiles")));
+        FakeFilePicker picker;
+        Backend backend(&tm, &picker, false, settingsFile);
+
+        // Validation checks.
+        QVERIFY(!Backend::validateBaseMapInput(QString(), QStringLiteral("https://x/{z}/{x}/{y}.png"), 18).isEmpty());
+        QVERIFY(!Backend::validateBaseMapInput(QStringLiteral("Bad"), QStringLiteral("ftp://x/{z}/{x}/{y}.png"), 18).isEmpty());
+        QVERIFY(!Backend::validateBaseMapInput(QStringLiteral("Missing"), QStringLiteral("https://x/{z}/{x}.png"), 18).isEmpty());
+        QVERIFY(Backend::validateBaseMapInput(QStringLiteral("Good TMS"), QStringLiteral("https://x/{z}/{x}/{-y}.png"), 16).isEmpty());
+
+        const int initialCount = backend.baseMapsVariant().size();
+        const QString addErr = backend.addCustomBaseMap(
+            QStringLiteral("My Radar"),
+            QStringLiteral("https://radar.example/{z}/{x}/{y}.png"),
+            15,
+            QStringLiteral("Radar Co"));
+        QVERIFY(addErr.isEmpty());
+        QCOMPARE(backend.baseMapsVariant().size(), initialCount + 1);
+        QCOMPARE(backend.baseLayerName(), QStringLiteral("My Radar"));
+        const QString customId = backend.baseLayerId();
+
+        // Update custom base map and move it up.
+        QVERIFY(backend.updateBaseMap(customId, QStringLiteral("My Radar HD"),
+                                      QStringLiteral("https://radar2.example/{z}/{x}/{y}.png"), 17,
+                                      QStringLiteral("Radar Co")).isEmpty());
+        QVERIFY(backend.moveBaseMap(customId, -1));
+        backend.setTerrainExaggeration(2.2);
+
+        // Reload in a fresh Backend instance to verify atomic JSON persistence.
+        Backend reloaded(&tm, &picker, false, settingsFile);
+        QCOMPARE(reloaded.baseLayerName(), QStringLiteral("My Radar HD"));
+        QCOMPARE(reloaded.baseMapsVariant().size(), initialCount + 1);
+        QVERIFY(std::abs(reloaded.terrainExaggeration() - 2.2) < 0.01);
+
+        // Prevent disabling the last remaining enabled base map.
+        for (const auto &v : reloaded.baseMapsVariant()) {
+            const QString id = v.toMap().value(QStringLiteral("id")).toString();
+            if (id != customId)
+                reloaded.setBaseMapEnabled(id, false);
+        }
+        QVERIFY(!reloaded.setBaseMapEnabled(customId, false));
+
+        // Remove custom map and verify fallback to a valid enabled map.
+        QVERIFY(reloaded.removeBaseMap(customId));
+        QCOMPARE(reloaded.baseMapsVariant().size(), initialCount);
+        QVERIFY(!reloaded.enabledBaseMapsVariant().isEmpty());
+
+        // Verify disk cache stats & clearTileCache.
+        QDir().mkpath(dir.filePath(QStringLiteral("tiles/dark-matter/1/0")));
+        write(dir.filePath(QStringLiteral("tiles/dark-matter/1/0/0.tile")), QByteArray(128, 'x'));
+        reloaded.refreshCacheStats();
+        QVERIFY(reloaded.cacheSummary().contains(QStringLiteral("128 B")));
+        reloaded.clearTileCache();
+        QCOMPARE(reloaded.cacheSummary(), QStringLiteral("Cache empty"));
     }
 
     void themeFallsBack() {

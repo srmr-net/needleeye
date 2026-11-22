@@ -1,12 +1,16 @@
 #include "backend.h"
 
 #include <QDesktopServices>
+#include <QDir>
+#include <QFile>
 #include <QFileInfo>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QNetworkReply>
 #include <QNetworkRequest>
+#include <QRegularExpression>
+#include <QStandardPaths>
 #include <QTimeZone>
 #include <QUrl>
 #include <QUrlQuery>
@@ -67,12 +71,26 @@ constexpr BuiltinPlace kBuiltinPlaces[] = {
     {"Stockholm", "Sweden", 59.3293, 18.0686}
 };
 
+QString formatByteSize(qint64 bytes) {
+    if (bytes >= 1024LL * 1024 * 1024)
+        return QStringLiteral("%1 GB").arg(static_cast<double>(bytes) / (1024.0 * 1024.0 * 1024.0), 0, 'f', 2);
+    if (bytes >= 1024LL * 1024)
+        return QStringLiteral("%1 MB").arg(static_cast<double>(bytes) / (1024.0 * 1024.0), 0, 'f', 1);
+    if (bytes >= 1024LL)
+        return QStringLiteral("%1 KB").arg(static_cast<double>(bytes) / 1024.0, 0, 'f', 0);
+    return QStringLiteral("%1 B").arg(bytes);
+}
+
 } // namespace
 
-Backend::Backend(TileManager *tileManager, FilePicker *filePicker, bool autoLoadDefaultFeeds, QObject *parent)
+Backend::Backend(TileManager *tileManager, FilePicker *filePicker,
+                 bool autoLoadDefaultFeeds, const QString &settingsPath, QObject *parent)
     : QObject(parent),
       m_tileManager(tileManager),
-      m_filePicker(filePicker) {
+      m_filePicker(filePicker),
+      m_settingsPath(settingsPath.isEmpty()
+                         ? QStandardPaths::writableLocation(QStandardPaths::ConfigLocation) + QStringLiteral("/needleeye/settings.json")
+                         : settingsPath) {
     if (!m_tileManager) {
         m_tileManager = new TileManager({}, this);
         m_ownsTileManager = true;
@@ -85,6 +103,12 @@ Backend::Backend(TileManager *tileManager, FilePicker *filePicker, bool autoLoad
     connect(m_tileManager, &TileManager::networkError, this, [this](const QString &msg) {
         setError(msg);
     });
+
+    m_baseMaps = TileManager::defaultBaseMaps();
+    loadSettings();
+    syncBaseMapsToTileManager();
+    ensureValidActiveBaseMap();
+    refreshCacheStats();
 
     m_timelineTimer.setInterval(50);
     connect(&m_timelineTimer, &QTimer::timeout, this, [this]() {
@@ -100,11 +124,15 @@ Backend::Backend(TileManager *tileManager, FilePicker *filePicker, bool autoLoad
 
     m_autoRefreshTimer.setInterval(60000);
     connect(&m_autoRefreshTimer, &QTimer::timeout, this, [this]() {
+        if (!m_autoRefreshEnabled)
+            return;
         const QDateTime now = QDateTime::currentDateTimeUtc();
+        const int defaultSec = std::max(60, m_autoRefreshMinutes * 60);
         for (const auto &feed : m_feeds) {
-            if (!feed.enabled || feed.isLocal || feed.loading || feed.refreshIntervalSec <= 0)
+            if (!feed.enabled || feed.isLocal || feed.loading)
                 continue;
-            if (!feed.lastUpdated.isValid() || feed.lastUpdated.secsTo(now) >= feed.refreshIntervalSec)
+            const int interval = feed.refreshIntervalSec > 0 ? std::min(feed.refreshIntervalSec, defaultSec) : defaultSec;
+            if (!feed.lastUpdated.isValid() || feed.lastUpdated.secsTo(now) >= interval)
                 refreshFeed(feed.id);
         }
     });
@@ -120,6 +148,182 @@ Backend::Backend(TileManager *tileManager, FilePicker *filePicker, bool autoLoad
     setupDefaultFeeds();
     if (autoLoadDefaultFeeds)
         refreshAllFeeds();
+}
+
+void Backend::loadSettings() {
+    QFile file(m_settingsPath);
+    if (!file.open(QIODevice::ReadOnly))
+        return;
+
+    const QJsonDocument doc = QJsonDocument::fromJson(file.readAll());
+    if (!doc.isObject())
+        return;
+
+    const QJsonObject root = doc.object();
+    if (root.contains(QStringLiteral("terrainEnabled")))
+        m_terrainEnabled = root.value(QStringLiteral("terrainEnabled")).toBool(true);
+    if (root.contains(QStringLiteral("terrainExaggeration")))
+        m_terrainExaggeration = std::clamp(root.value(QStringLiteral("terrainExaggeration")).toDouble(1.0), 0.25, 4.0);
+    if (root.contains(QStringLiteral("graticuleEnabled")))
+        m_graticuleEnabled = root.value(QStringLiteral("graticuleEnabled")).toBool(true);
+    if (root.contains(QStringLiteral("atmosphereEnabled")))
+        m_atmosphereEnabled = root.value(QStringLiteral("atmosphereEnabled")).toBool(true);
+    if (root.contains(QStringLiteral("autoRefreshEnabled")))
+        m_autoRefreshEnabled = root.value(QStringLiteral("autoRefreshEnabled")).toBool(true);
+    if (root.contains(QStringLiteral("autoRefreshMinutes")))
+        m_autoRefreshMinutes = std::clamp(root.value(QStringLiteral("autoRefreshMinutes")).toInt(5), 1, 120);
+
+    const QJsonArray mapsArr = root.value(QStringLiteral("baseMaps")).toArray();
+    if (!mapsArr.isEmpty()) {
+        QVector<BaseMapSpec> loaded;
+        QSet<QString> seenIds;
+        int nextUid = 0;
+
+        for (const auto &v : mapsArr) {
+            const QJsonObject obj = v.toObject();
+            const QString id = obj.value(QStringLiteral("id")).toString().trimmed();
+            const QString name = obj.value(QStringLiteral("name")).toString().trimmed();
+            const QString url = obj.value(QStringLiteral("urlTemplate")).toString().trimmed();
+            if (id.isEmpty() || name.isEmpty() || url.isEmpty() || seenIds.contains(id))
+                continue;
+
+            BaseMapSpec spec;
+            spec.uid = nextUid++;
+            spec.id = id;
+            spec.name = name;
+            spec.urlTemplate = url;
+            spec.attribution = obj.value(QStringLiteral("attribution")).toString().trimmed();
+            spec.maxZoom = std::clamp(obj.value(QStringLiteral("maxZoom")).toInt(18), 1, 20);
+            spec.enabled = obj.value(QStringLiteral("enabled")).toBool(true);
+            spec.builtin = obj.value(QStringLiteral("builtin")).toBool(false);
+            seenIds.insert(id);
+            loaded.append(spec);
+        }
+
+        if (!loaded.isEmpty()) {
+            // Append any newly introduced built-in maps missing from older configs.
+            for (auto def : TileManager::defaultBaseMaps()) {
+                if (!seenIds.contains(def.id)) {
+                    def.uid = nextUid++;
+                    loaded.append(def);
+                }
+            }
+            m_baseMaps = loaded;
+            m_nextBaseMapUid = std::max(100, nextUid + 1);
+        }
+    }
+
+    const QString activeId = root.value(QStringLiteral("activeBaseMapId")).toString();
+    const int activeIdx = findBaseMapIndexById(activeId);
+    if (activeIdx >= 0 && m_baseMaps[activeIdx].enabled)
+        m_activeBaseMapUid = m_baseMaps[activeIdx].uid;
+}
+
+void Backend::saveSettings() const {
+    if (m_settingsPath.isEmpty())
+        return;
+
+    QJsonObject root;
+    root.insert(QStringLiteral("activeBaseMapId"), baseLayerId());
+    root.insert(QStringLiteral("terrainEnabled"), m_terrainEnabled);
+    root.insert(QStringLiteral("terrainExaggeration"), m_terrainExaggeration);
+    root.insert(QStringLiteral("graticuleEnabled"), m_graticuleEnabled);
+    root.insert(QStringLiteral("atmosphereEnabled"), m_atmosphereEnabled);
+    root.insert(QStringLiteral("autoRefreshEnabled"), m_autoRefreshEnabled);
+    root.insert(QStringLiteral("autoRefreshMinutes"), m_autoRefreshMinutes);
+
+    QJsonArray mapsArr;
+    for (const auto &m : m_baseMaps) {
+        QJsonObject obj;
+        obj.insert(QStringLiteral("id"), m.id);
+        obj.insert(QStringLiteral("name"), m.name);
+        obj.insert(QStringLiteral("urlTemplate"), m.urlTemplate);
+        obj.insert(QStringLiteral("attribution"), m.attribution);
+        obj.insert(QStringLiteral("maxZoom"), m.maxZoom);
+        obj.insert(QStringLiteral("enabled"), m.enabled);
+        obj.insert(QStringLiteral("builtin"), m.builtin);
+        mapsArr.append(obj);
+    }
+    root.insert(QStringLiteral("baseMaps"), mapsArr);
+
+    // Save atomically beside target, then rename so crashes never corrupt settings.
+    QDir().mkpath(QFileInfo(m_settingsPath).absolutePath());
+    const QString tmpPath = m_settingsPath + QStringLiteral(".tmp");
+    QFile tmp(tmpPath);
+    if (!tmp.open(QIODevice::WriteOnly | QIODevice::Truncate))
+        return;
+    tmp.write(QJsonDocument(root).toJson(QJsonDocument::Indented));
+    tmp.close();
+    QFile::remove(m_settingsPath);
+    tmp.rename(m_settingsPath);
+}
+
+void Backend::syncBaseMapsToTileManager() {
+    if (m_tileManager)
+        m_tileManager->setBaseMaps(m_baseMaps);
+}
+
+void Backend::ensureValidActiveBaseMap() {
+    const int idx = findBaseMapIndexByUid(m_activeBaseMapUid);
+    if (idx >= 0 && m_baseMaps[idx].enabled)
+        return;
+
+    for (const auto &m : m_baseMaps) {
+        if (m.enabled) {
+            m_activeBaseMapUid = m.uid;
+            return;
+        }
+    }
+    if (!m_baseMaps.isEmpty()) {
+        m_baseMaps[0].enabled = true;
+        m_activeBaseMapUid = m_baseMaps[0].uid;
+    }
+}
+
+int Backend::findBaseMapIndexById(const QString &mapId) const {
+    for (int i = 0; i < m_baseMaps.size(); ++i)
+        if (m_baseMaps[i].id == mapId)
+            return i;
+    return -1;
+}
+
+int Backend::findBaseMapIndexByUid(int uid) const {
+    for (int i = 0; i < m_baseMaps.size(); ++i)
+        if (m_baseMaps[i].uid == uid)
+            return i;
+    return -1;
+}
+
+QString Backend::makeUniqueBaseMapId(const QString &name) const {
+    QString base = name.toLower().trimmed();
+    base.replace(QRegularExpression(QStringLiteral("[^a-z0-9]+")), QStringLiteral("-"));
+    base.remove(QRegularExpression(QStringLiteral("^-+|-+$")));
+    if (base.isEmpty())
+        base = QStringLiteral("custom-map");
+    QString candidate = base;
+    int suffix = 2;
+    while (findBaseMapIndexById(candidate) >= 0)
+        candidate = QStringLiteral("%1-%2").arg(base).arg(suffix++);
+    return candidate;
+}
+
+QString Backend::validateBaseMapInput(const QString &name, const QString &urlTemplate, int maxZoom) {
+    if (name.trimmed().isEmpty())
+        return tr("Base map name cannot be empty.");
+
+    const QString tpl = urlTemplate.trimmed();
+    if (!tpl.startsWith(QStringLiteral("http://")) && !tpl.startsWith(QStringLiteral("https://")))
+        return tr("URL template must start with http:// or https://.");
+
+    if (!tpl.contains(QStringLiteral("{z}")) || !tpl.contains(QStringLiteral("{x}")) ||
+        (!tpl.contains(QStringLiteral("{y}")) && !tpl.contains(QStringLiteral("{-y}")))) {
+        return tr("URL template must include {z}, {x}, and {y} (or {-y}) placeholders.");
+    }
+
+    if (maxZoom < 1 || maxZoom > 20)
+        return tr("Max zoom must be between 1 and 20.");
+
+    return {};
 }
 
 void Backend::setupDefaultFeeds() {
@@ -143,28 +347,277 @@ void Backend::setupDefaultFeeds() {
     };
 }
 
-void Backend::setBaseLayer(int layer) {
-    layer = std::clamp(layer, 0, 3);
-    if (m_baseLayer == layer)
+void Backend::setBaseLayer(int layerUid) {
+    const int idx = findBaseMapIndexByUid(layerUid);
+    if (idx < 0 || m_activeBaseMapUid == layerUid)
         return;
-    m_baseLayer = layer;
+    m_activeBaseMapUid = layerUid;
+    saveSettings();
     emit settingsChanged();
+    emit baseMapsChanged();
+}
+
+QString Backend::baseLayerId() const {
+    const int idx = findBaseMapIndexByUid(m_activeBaseMapUid);
+    return idx >= 0 ? m_baseMaps[idx].id : QString();
 }
 
 QString Backend::baseLayerName() const {
-    switch (static_cast<BaseLayer>(m_baseLayer)) {
-    case BaseLayer::DarkMatter:    return tr("Dark");
-    case BaseLayer::EsriSatellite: return tr("Satellite");
-    case BaseLayer::Sentinel2:     return tr("Sentinel-2");
-    case BaseLayer::OpenStreetMap: return tr("OSM");
-    default:                       return tr("Dark");
+    const int idx = findBaseMapIndexByUid(m_activeBaseMapUid);
+    if (idx < 0)
+        return tr("Dark");
+    const auto &m = m_baseMaps[idx];
+    if (m.id == QLatin1String("dark-matter") && m.name == QLatin1String("Dark"))
+        return tr("Dark");
+    if (m.id == QLatin1String("esri-satellite") && m.name == QLatin1String("Satellite"))
+        return tr("Satellite");
+    return m.name;
+}
+
+QString Backend::baseLayerAttribution() const {
+    const int idx = findBaseMapIndexByUid(m_activeBaseMapUid);
+    return idx >= 0 ? m_baseMaps[idx].attribution : QString();
+}
+
+QVariantList Backend::baseMapsVariant() const {
+    QVariantList list;
+    list.reserve(m_baseMaps.size());
+    int enabledSlot = 0;
+    for (int i = 0; i < m_baseMaps.size(); ++i) {
+        const auto &m = m_baseMaps[i];
+        QVariantMap item;
+        item.insert(QStringLiteral("uid"), m.uid);
+        item.insert(QStringLiteral("id"), m.id);
+        item.insert(QStringLiteral("name"), m.name);
+        item.insert(QStringLiteral("urlTemplate"), m.urlTemplate);
+        item.insert(QStringLiteral("attribution"), m.attribution);
+        item.insert(QStringLiteral("maxZoom"), m.maxZoom);
+        item.insert(QStringLiteral("enabled"), m.enabled);
+        item.insert(QStringLiteral("builtin"), m.builtin);
+        item.insert(QStringLiteral("active"), m.uid == m_activeBaseMapUid);
+        item.insert(QStringLiteral("slot"), m.enabled ? (++enabledSlot) : 0);
+        item.insert(QStringLiteral("canMoveUp"), i > 0);
+        item.insert(QStringLiteral("canMoveDown"), i + 1 < m_baseMaps.size());
+        list.append(item);
     }
+    return list;
+}
+
+QVariantList Backend::enabledBaseMapsVariant() const {
+    QVariantList list;
+    int slot = 0;
+    for (const auto &m : m_baseMaps) {
+        if (!m.enabled)
+            continue;
+        ++slot;
+        QVariantMap item;
+        item.insert(QStringLiteral("uid"), m.uid);
+        item.insert(QStringLiteral("id"), m.id);
+        item.insert(QStringLiteral("name"), m.name);
+        item.insert(QStringLiteral("slot"), slot);
+        item.insert(QStringLiteral("active"), m.uid == m_activeBaseMapUid);
+        list.append(item);
+    }
+    return list;
+}
+
+void Backend::selectBaseMap(const QString &mapId) {
+    const int idx = findBaseMapIndexById(mapId);
+    if (idx < 0)
+        return;
+    if (!m_baseMaps[idx].enabled) {
+        m_baseMaps[idx].enabled = true;
+        syncBaseMapsToTileManager();
+    }
+    m_activeBaseMapUid = m_baseMaps[idx].uid;
+    saveSettings();
+    emit settingsChanged();
+    emit baseMapsChanged();
+}
+
+void Backend::selectBaseMapBySlot(int slotIndex) {
+    if (slotIndex < 0)
+        return;
+    int seen = 0;
+    for (const auto &m : m_baseMaps) {
+        if (!m.enabled)
+            continue;
+        if (seen == slotIndex) {
+            setBaseLayer(m.uid);
+            return;
+        }
+        ++seen;
+    }
+}
+
+void Backend::cycleBaseMap() {
+    QVector<int> enabledUids;
+    for (const auto &m : m_baseMaps)
+        if (m.enabled)
+            enabledUids.append(m.uid);
+    if (enabledUids.size() <= 1)
+        return;
+    const int pos = enabledUids.indexOf(m_activeBaseMapUid);
+    const int nextUid = enabledUids[(pos + 1) % enabledUids.size()];
+    setBaseLayer(nextUid);
+}
+
+bool Backend::setBaseMapEnabled(const QString &mapId, bool enabled) {
+    const int idx = findBaseMapIndexById(mapId);
+    if (idx < 0)
+        return false;
+    if (m_baseMaps[idx].enabled == enabled)
+        return true;
+
+    // Never leave the globe with zero enabled base maps.
+    if (!enabled) {
+        int enabledCount = 0;
+        for (const auto &m : m_baseMaps)
+            if (m.enabled)
+                ++enabledCount;
+        if (enabledCount <= 1) {
+            setError(tr("At least one base map must remain enabled."));
+            return false;
+        }
+    }
+
+    m_baseMaps[idx].enabled = enabled;
+    ensureValidActiveBaseMap();
+    syncBaseMapsToTileManager();
+    saveSettings();
+    emit baseMapsChanged();
+    emit settingsChanged();
+    return true;
+}
+
+bool Backend::moveBaseMap(const QString &mapId, int delta) {
+    const int idx = findBaseMapIndexById(mapId);
+    const int target = idx + delta;
+    if (idx < 0 || target < 0 || target >= m_baseMaps.size())
+        return false;
+    std::swap(m_baseMaps[idx], m_baseMaps[target]);
+    saveSettings();
+    emit baseMapsChanged();
+    return true;
+}
+
+QString Backend::addCustomBaseMap(const QString &name, const QString &urlTemplate,
+                                  int maxZoom, const QString &attribution) {
+    const QString err = validateBaseMapInput(name, urlTemplate, maxZoom);
+    if (!err.isEmpty())
+        return err;
+
+    BaseMapSpec spec;
+    spec.uid = m_nextBaseMapUid++;
+    spec.id = makeUniqueBaseMapId(name);
+    spec.name = name.trimmed();
+    spec.urlTemplate = urlTemplate.trimmed();
+    spec.attribution = attribution.trimmed();
+    spec.maxZoom = std::clamp(maxZoom, 1, 20);
+    spec.enabled = true;
+    spec.builtin = false;
+
+    m_baseMaps.append(spec);
+    m_activeBaseMapUid = spec.uid;
+    syncBaseMapsToTileManager();
+    saveSettings();
+    emit baseMapsChanged();
+    emit settingsChanged();
+    setStatus(tr("Added base map: %1").arg(spec.name));
+    return {};
+}
+
+QString Backend::updateBaseMap(const QString &mapId, const QString &name,
+                               const QString &urlTemplate, int maxZoom,
+                               const QString &attribution) {
+    const int idx = findBaseMapIndexById(mapId);
+    if (idx < 0)
+        return tr("Base map not found.");
+
+    const QString err = validateBaseMapInput(name, urlTemplate, maxZoom);
+    if (!err.isEmpty())
+        return err;
+
+    const bool urlChanged = (m_baseMaps[idx].urlTemplate != urlTemplate.trimmed());
+    m_baseMaps[idx].name = name.trimmed();
+    m_baseMaps[idx].urlTemplate = urlTemplate.trimmed();
+    m_baseMaps[idx].maxZoom = std::clamp(maxZoom, 1, 20);
+    m_baseMaps[idx].attribution = attribution.trimmed();
+
+    syncBaseMapsToTileManager();
+    if (urlChanged && m_tileManager)
+        m_tileManager->invalidateLayerCache(m_baseMaps[idx].uid);
+    saveSettings();
+    emit baseMapsChanged();
+    emit settingsChanged();
+    refreshCacheStats();
+    return {};
+}
+
+bool Backend::removeBaseMap(const QString &mapId) {
+    const int idx = findBaseMapIndexById(mapId);
+    if (idx < 0 || m_baseMaps[idx].builtin)
+        return false;
+
+    const int removedUid = m_baseMaps[idx].uid;
+    m_baseMaps.removeAt(idx);
+    ensureValidActiveBaseMap();
+    syncBaseMapsToTileManager();
+    if (m_tileManager)
+        m_tileManager->invalidateLayerCache(removedUid);
+    saveSettings();
+    emit baseMapsChanged();
+    emit settingsChanged();
+    refreshCacheStats();
+    return true;
+}
+
+void Backend::resetBaseMapsToDefaults() {
+    m_baseMaps = TileManager::defaultBaseMaps();
+    m_activeBaseMapUid = m_baseMaps.first().uid;
+    syncBaseMapsToTileManager();
+    saveSettings();
+    emit baseMapsChanged();
+    emit settingsChanged();
+    setStatus(tr("Base maps reset to defaults."));
+}
+
+void Backend::refreshCacheStats() {
+    if (!m_tileManager)
+        return;
+    const CacheStats stats = m_tileManager->diskCacheStats();
+    const QString summary = stats.fileCount == 0
+        ? tr("Cache empty")
+        : tr("%1 (%n tiles)", "", stats.fileCount).arg(formatByteSize(stats.bytes));
+    if (summary != m_cacheSummary) {
+        m_cacheSummary = summary;
+        emit cacheStatsChanged();
+    }
+}
+
+void Backend::clearTileCache() {
+    if (!m_tileManager)
+        return;
+    m_tileManager->clearAllCache();
+    refreshCacheStats();
+    emit settingsChanged();
+    setStatus(tr("Tile cache cleared."));
 }
 
 void Backend::setTerrainEnabled(bool enabled) {
     if (m_terrainEnabled == enabled)
         return;
     m_terrainEnabled = enabled;
+    saveSettings();
+    emit settingsChanged();
+}
+
+void Backend::setTerrainExaggeration(double value) {
+    value = std::clamp(value, 0.25, 4.0);
+    if (std::abs(m_terrainExaggeration - value) < 1e-4)
+        return;
+    m_terrainExaggeration = value;
+    saveSettings();
     emit settingsChanged();
 }
 
@@ -172,6 +625,7 @@ void Backend::setGraticuleEnabled(bool enabled) {
     if (m_graticuleEnabled == enabled)
         return;
     m_graticuleEnabled = enabled;
+    saveSettings();
     emit settingsChanged();
 }
 
@@ -179,6 +633,24 @@ void Backend::setAtmosphereEnabled(bool enabled) {
     if (m_atmosphereEnabled == enabled)
         return;
     m_atmosphereEnabled = enabled;
+    saveSettings();
+    emit settingsChanged();
+}
+
+void Backend::setAutoRefreshEnabled(bool enabled) {
+    if (m_autoRefreshEnabled == enabled)
+        return;
+    m_autoRefreshEnabled = enabled;
+    saveSettings();
+    emit settingsChanged();
+}
+
+void Backend::setAutoRefreshMinutes(int minutes) {
+    minutes = std::clamp(minutes, 1, 120);
+    if (m_autoRefreshMinutes == minutes)
+        return;
+    m_autoRefreshMinutes = minutes;
+    saveSettings();
     emit settingsChanged();
 }
 
@@ -601,7 +1073,6 @@ bool Backend::loadLocalFile(const QString &filePath) {
     emit foldersChanged();
     setStatus(tr("Opened %1 (%n features)", "", doc.placemarks.size()).arg(entry.name));
 
-    // Fly to first placemark so opening a local KML jumps straight to its area.
     if (!doc.placemarks.isEmpty()) {
         const auto &pm = doc.placemarks.first();
         const GeoCoord c = pm.anchor();
@@ -696,8 +1167,6 @@ void Backend::rebuildVisiblePlacemarks() {
     const qint64 cursorMs = filterTime
         ? m_timeMinMs + static_cast<qint64>((m_timeMaxMs - m_timeMinMs) * m_timelineProgress)
         : 0;
-    // Show events within a rolling window behind the timeline cursor so
-    // animated earthquake and storm feeds build cleanly over time.
     const qint64 windowMs = std::max<qint64>(3600 * 1000 * 12, (m_timeMaxMs - m_timeMinMs) / 8);
 
     for (const auto &feed : m_feeds) {
@@ -749,7 +1218,6 @@ void Backend::runLocalSearch(const QString &query) {
     m_localSearchResults.clear();
     const QString q = query.toLower();
 
-    // 1. Loaded KML placemarks first so users can jump straight to any event.
     int kmlHits = 0;
     for (const auto &pm : m_visiblePlacemarks) {
         if (pm.name.toLower().contains(q) || pm.folderPath.toLower().contains(q) ||
@@ -769,7 +1237,6 @@ void Backend::runLocalSearch(const QString &query) {
         }
     }
 
-    // 2. Built-in offline places (cities, volcanoes, landmarks).
     int placeHits = 0;
     for (const auto &place : kBuiltinPlaces) {
         const QString name = QString::fromUtf8(place.name);

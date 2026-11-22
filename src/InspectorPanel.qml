@@ -18,6 +18,12 @@ Rectangle {
 
     readonly property var pm: backend.selectedPlacemark
 
+    MouseArea {
+        anchors.fill: parent
+        hoverEnabled: true
+        onWheel: function(wheel) { wheel.accepted = true }
+    }
+
     ColumnLayout {
         anchors.fill: parent
         anchors.margins: 14
