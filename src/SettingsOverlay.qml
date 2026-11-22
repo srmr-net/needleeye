@@ -11,11 +11,25 @@ Item {
     property bool active: false
     property int currentTab: 0 // 0 = Base Maps, 1 = Display & Cache
     property string editingMapId: ""
+    property string formProjection: "xyz" // "xyz" | "equirectangular" | "mercator"
     property string formError: ""
     property bool inputFocused: nameField.activeFocus || urlField.activeFocus ||
                                 maxZoomField.activeFocus || attrField.activeFocus
 
     signal closeRequested()
+
+    Connections {
+        target: backend
+        function onBaseMapImagePicked(path) {
+            urlField.text = path
+            if (nameField.text.trim() === "") {
+                var slash = path.lastIndexOf("/")
+                var fname = slash >= 0 ? path.substring(slash + 1) : path
+                var dot = fname.lastIndexOf(".")
+                nameField.text = dot > 0 ? fname.substring(0, dot) : fname
+            }
+        }
+    }
 
     onActiveChanged: {
         if (active) {
@@ -131,6 +145,7 @@ Item {
 
     function resetForm() {
         editingMapId = ""
+        formProjection = "xyz"
         nameField.text = ""
         urlField.text = ""
         maxZoomField.text = "18"
@@ -142,6 +157,7 @@ Item {
 
     function beginEdit(item) {
         editingMapId = item.id
+        formProjection = item.projection || "xyz"
         nameField.text = item.name
         urlField.text = item.urlTemplate
         maxZoomField.text = String(item.maxZoom)
@@ -156,9 +172,9 @@ Item {
             zoom = 18
         var err = ""
         if (editingMapId !== "") {
-            err = backend.updateBaseMap(editingMapId, nameField.text, urlField.text, zoom, attrField.text)
+            err = backend.updateBaseMap(editingMapId, nameField.text, urlField.text, zoom, attrField.text, formProjection)
         } else {
-            err = backend.addCustomBaseMap(nameField.text, urlField.text, zoom, attrField.text)
+            err = backend.addCustomBaseMap(nameField.text, urlField.text, zoom, attrField.text, formProjection)
         }
         if (err !== "") {
             formError = err
@@ -424,7 +440,9 @@ Item {
                                         }
 
                                         Text {
-                                            text: "Z" + modelData.maxZoom
+                                            text: modelData.projection === "equirectangular"
+                                                ? "EQUIRECT"
+                                                : (modelData.projection === "mercator" ? "MERCATOR" : ("Z" + modelData.maxZoom))
                                             color: "#66ffffff"
                                             font.family: "monospace"
                                             font.pixelSize: 10
@@ -536,23 +554,48 @@ Item {
 
                     RowLayout {
                         Layout.fillWidth: true
-                        spacing: 8
+                        spacing: 6
 
                         Text {
-                            text: overlay.editingMapId !== "" ? qsTr("EDIT BASE MAP") : qsTr("ADD CUSTOM BASE MAP")
+                            text: overlay.editingMapId !== "" ? qsTr("EDIT BASE MAP") : qsTr("ADD BASE MAP")
                             color: "#88ffffff"
                             font.pixelSize: 10
                             font.weight: Font.Bold
                             font.letterSpacing: 1.4
                         }
 
-                        Text {
-                            Layout.fillWidth: true
-                            text: qsTr("Placeholders: {z} {x} {y} {-y} {s}")
-                            color: "#66ffffff"
-                            font.family: "monospace"
-                            font.pixelSize: 10
-                            horizontalAlignment: Text.AlignRight
+                        Item { Layout.fillWidth: true }
+
+                        Repeater {
+                            model: [
+                                { id: "xyz", label: qsTr("Tiled (XYZ)") },
+                                { id: "equirectangular", label: qsTr("Equirectangular") },
+                                { id: "mercator", label: qsTr("Mercator Image") }
+                            ]
+
+                            Rectangle {
+                                Layout.preferredHeight: 22
+                                Layout.preferredWidth: projLbl.implicitWidth + 14
+                                radius: Math.min(4, theme.radius)
+                                color: overlay.formProjection === modelData.id ? theme.accent : "#16ffffff"
+                                border.width: 1
+                                border.color: overlay.formProjection === modelData.id ? theme.accent : "#22ffffff"
+
+                                Text {
+                                    id: projLbl
+                                    anchors.centerIn: parent
+                                    text: modelData.label
+                                    color: overlay.formProjection === modelData.id ? theme.accentForeground : "#ccffffff"
+                                    font.pixelSize: 10
+                                    font.weight: overlay.formProjection === modelData.id ? Font.DemiBold : Font.Normal
+                                }
+
+                                MouseArea {
+                                    anchors.fill: parent
+                                    cursorShape: Qt.PointingHandCursor
+                                    onClicked: overlay.formProjection = modelData.id
+                                }
+                            }
                         }
                     }
 
@@ -562,7 +605,7 @@ Item {
 
                         TextField {
                             id: nameField
-                            Layout.preferredWidth: 180
+                            Layout.preferredWidth: 165
                             placeholderText: qsTr("Name")
                             font.pixelSize: 12
                             Material.roundedScale: theme.radius
@@ -572,7 +615,9 @@ Item {
                         TextField {
                             id: urlField
                             Layout.fillWidth: true
-                            placeholderText: qsTr("https://tiles.example.com/{z}/{x}/{y}.png")
+                            placeholderText: overlay.formProjection === "xyz"
+                                ? qsTr("https://tiles.example.com/{z}/{x}/{y}.png")
+                                : qsTr("Image URL (http/https) or local file path…")
                             font.family: "monospace"
                             font.pixelSize: 11
                             Material.roundedScale: theme.radius
@@ -581,13 +626,38 @@ Item {
 
                         TextField {
                             id: maxZoomField
-                            Layout.preferredWidth: 74
+                            visible: overlay.formProjection === "xyz"
+                            Layout.preferredWidth: 70
                             placeholderText: qsTr("Max Z")
                             text: "18"
                             font.family: "monospace"
                             font.pixelSize: 12
                             Material.roundedScale: theme.radius
                             onAccepted: overlay.submitForm()
+                        }
+
+                        Rectangle {
+                            visible: overlay.formProjection !== "xyz"
+                            Layout.preferredHeight: 34
+                            Layout.preferredWidth: browseTxt.implicitWidth + 18
+                            radius: Math.min(4, theme.radius)
+                            color: "#1cffffff"
+                            border.width: 1
+                            border.color: "#2cffffff"
+
+                            Text {
+                                id: browseTxt
+                                anchors.centerIn: parent
+                                text: qsTr("Browse…")
+                                color: theme.foreground
+                                font.pixelSize: 11
+                            }
+
+                            MouseArea {
+                                anchors.fill: parent
+                                cursorShape: Qt.PointingHandCursor
+                                onClicked: backend.browseBaseMapImage()
+                            }
                         }
                     }
 

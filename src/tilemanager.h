@@ -27,6 +27,12 @@ inline size_t qHash(const TileKey &k, size_t seed = 0) {
     return qHashMulti(seed, k.layer, k.z, k.x, k.y);
 }
 
+enum class MapProjection : int {
+    TiledXyz = 0,
+    SingleEquirectangular = 1,
+    SingleMercator = 2
+};
+
 struct BaseMapSpec {
     int uid = 0;
     QString id;
@@ -36,6 +42,7 @@ struct BaseMapSpec {
     int maxZoom = 18;
     bool enabled = true;
     bool builtin = false;
+    MapProjection projection = MapProjection::TiledXyz;
 };
 
 struct CacheStats {
@@ -57,9 +64,13 @@ public:
 
     quint64 cacheRevision() const { return m_cacheRevision.load(); }
 
-    // Returns cached image if immediately available; otherwise queues async fetch.
+    // Slippy XYZ tiles.
     QImage requestTile(int layer, int z, int x, int y);
     QImage cachedTile(int layer, int z, int x, int y) const;
+
+    // Single-image world textures (Equirectangular / Web Mercator), from HTTP(S) or local file.
+    QImage requestSingleImage(int layer);
+    QImage cachedSingleImage(int layer) const;
 
     // Decodes elevation in meters from cached AWS Terrarium DEM tiles (returns 0 if unavailable).
     double sampleElevationMeters(double latDeg, double lonDeg, int preferredZoom = 6) const;
@@ -67,7 +78,10 @@ public:
     QString tileUrl(int layer, int z, int x, int y) const;
     QString layerSlug(int layer) const;
     int maxZoomForLayer(int layer) const;
+    MapProjection projectionForLayer(int layer) const;
 
+    static QString projectionToString(MapProjection proj);
+    static MapProjection projectionFromString(const QString &str);
     static QString expandUrlTemplate(const QString &tpl, int z, int x, int y);
     static QVector<BaseMapSpec> defaultBaseMaps();
 
@@ -80,6 +94,8 @@ signals:
 
 private:
     QString diskPath(const TileKey &key) const;
+    QString singleImageDiskPath(int layer) const;
+    static QImage prepareGpuImage(const QImage &img, int maxDim);
     void pumpQueue();
 
     QString m_cacheDir;

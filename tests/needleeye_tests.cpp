@@ -19,6 +19,10 @@ public:
         if (callback)
             callback(nextPath, {});
     }
+    void openImageFile(const QString &, Callback callback) override {
+        if (callback)
+            callback(nextPath, {});
+    }
 };
 
 QByteArray sampleHazardKml() {
@@ -244,6 +248,46 @@ private slots:
         QVERIFY(reloaded.cacheSummary().contains(QStringLiteral("128 B")));
         reloaded.clearTileCache();
         QCOMPARE(reloaded.cacheSummary(), QStringLiteral("Cache empty"));
+    }
+
+    void singleImageMapsValidatePersistAndLoadLocalFile() {
+        QTemporaryDir dir;
+        const QString settingsFile = dir.filePath(QStringLiteral("settings.json"));
+        const QString imgPath = dir.filePath(QStringLiteral("world.png"));
+        QImage synthetic(64, 32, QImage::Format_RGBA8888);
+        synthetic.fill(QColor(20, 40, 80, 255));
+        QVERIFY(synthetic.save(imgPath));
+
+        // Validation for equirectangular & mercator single images.
+        QVERIFY(Backend::validateBaseMapInput(QStringLiteral("Earth Night"),
+                                              QStringLiteral("https://cdn.jsdelivr.net/npm/three-globe/example/img/earth-night.jpg"),
+                                              10, QStringLiteral("equirectangular")).isEmpty());
+        QVERIFY(Backend::validateBaseMapInput(QStringLiteral("Local Mercator"),
+                                              imgPath, 10, QStringLiteral("mercator")).isEmpty());
+        QVERIFY(!Backend::validateBaseMapInput(QStringLiteral("Missing File"),
+                                               dir.filePath(QStringLiteral("does-not-exist.jpg")),
+                                               10, QStringLiteral("equirectangular")).isEmpty());
+
+        TileManager tm(dir.filePath(QStringLiteral("tiles")));
+        FakeFilePicker picker;
+        Backend backend(&tm, &picker, false, settingsFile);
+
+        const QString err = backend.addCustomBaseMap(QStringLiteral("Local Blue Marble"),
+                                                     imgPath, 10, QStringLiteral("NASA"),
+                                                     QStringLiteral("mercator"));
+        QVERIFY(err.isEmpty());
+        const int uid = backend.baseLayer();
+        QCOMPARE(tm.projectionForLayer(uid), MapProjection::SingleMercator);
+
+        const QImage loaded = tm.requestSingleImage(uid);
+        QVERIFY(!loaded.isNull());
+        QCOMPARE(loaded.width(), 64);
+        QCOMPARE(loaded.height(), 32);
+
+        // Verify projection survives settings reload.
+        Backend reloaded(&tm, &picker, false, settingsFile);
+        QCOMPARE(reloaded.baseLayerName(), QStringLiteral("Local Blue Marble"));
+        QCOMPARE(tm.projectionForLayer(reloaded.baseLayer()), MapProjection::SingleMercator);
     }
 
     void themeFallsBack() {

@@ -136,10 +136,13 @@ public:
     Q_INVOKABLE bool setBaseMapEnabled(const QString &mapId, bool enabled);
     Q_INVOKABLE bool moveBaseMap(const QString &mapId, int delta);
     Q_INVOKABLE QString addCustomBaseMap(const QString &name, const QString &urlTemplate,
-                                         int maxZoom = 18, const QString &attribution = {});
+                                         int maxZoom = 18, const QString &attribution = {},
+                                         const QString &projection = QStringLiteral("xyz"));
     Q_INVOKABLE QString updateBaseMap(const QString &mapId, const QString &name,
                                       const QString &urlTemplate, int maxZoom,
-                                      const QString &attribution);
+                                      const QString &attribution,
+                                      const QString &projection = QStringLiteral("xyz"));
+    Q_INVOKABLE void browseBaseMapImage();
     Q_INVOKABLE bool removeBaseMap(const QString &mapId);
     Q_INVOKABLE void resetBaseMapsToDefaults();
     Q_INVOKABLE void refreshCacheStats();
@@ -165,11 +168,13 @@ public:
 
     // Exposed for tests.
     bool ingestKmlBytesForFeed(const QString &feedId, const QByteArray &data, const QString &sourceName = {});
-    static QString validateBaseMapInput(const QString &name, const QString &urlTemplate, int maxZoom);
+    static QString validateBaseMapInput(const QString &name, const QString &urlTemplate, int maxZoom,
+                                        const QString &projection = QStringLiteral("xyz"));
 
 signals:
     void settingsChanged();
     void baseMapsChanged();
+    void baseMapImagePicked(const QString &path);
     void cacheStatsChanged();
     void feedsChanged();
     void foldersChanged();

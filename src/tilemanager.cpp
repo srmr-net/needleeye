@@ -8,6 +8,7 @@
 #include <QNetworkReply>
 #include <QNetworkRequest>
 #include <QStandardPaths>
+#include <QUrl>
 #include <algorithm>
 #include <cmath>
 
@@ -21,29 +22,53 @@ TileManager::TileManager(const QString &cacheDir, QObject *parent)
     setBaseMaps(defaultBaseMaps());
 }
 
+QString TileManager::projectionToString(MapProjection proj) {
+    switch (proj) {
+    case MapProjection::SingleEquirectangular: return QStringLiteral("equirectangular");
+    case MapProjection::SingleMercator:        return QStringLiteral("mercator");
+    case MapProjection::TiledXyz:
+    default:                                   return QStringLiteral("xyz");
+    }
+}
+
+MapProjection TileManager::projectionFromString(const QString &str) {
+    const QString s = str.trimmed().toLower();
+    if (s == QLatin1String("equirectangular") || s == QLatin1String("plate-carree"))
+        return MapProjection::SingleEquirectangular;
+    if (s == QLatin1String("mercator") || s == QLatin1String("web-mercator"))
+        return MapProjection::SingleMercator;
+    return MapProjection::TiledXyz;
+}
+
 QVector<BaseMapSpec> TileManager::defaultBaseMaps() {
     return {
         {0, QStringLiteral("dark-matter"), QStringLiteral("Dark"),
          QStringLiteral("https://basemaps.cartocdn.com/dark_all/{z}/{x}/{y}.png"),
-         QStringLiteral("© OpenStreetMap, © CARTO"), 18, true, true},
+         QStringLiteral("© OpenStreetMap, © CARTO"), 18, true, true, MapProjection::TiledXyz},
         {1, QStringLiteral("esri-satellite"), QStringLiteral("Satellite"),
          QStringLiteral("https://services.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}"),
-         QStringLiteral("© Esri, Maxar, Earthstar Geographics"), 17, true, true},
+         QStringLiteral("© Esri, Maxar, Earthstar Geographics"), 17, true, true, MapProjection::TiledXyz},
         {2, QStringLiteral("sentinel-2"), QStringLiteral("Sentinel-2"),
          QStringLiteral("https://tiles.maps.eox.at/wmts/1.0.0/s2cloudless-2021_3857/default/GoogleMapsCompatible/{z}/{y}/{x}.jpg"),
-         QStringLiteral("Sentinel-2 cloudless by EOX (CC BY 4.0)"), 13, true, true},
+         QStringLiteral("Sentinel-2 cloudless by EOX (CC BY 4.0)"), 13, true, true, MapProjection::TiledXyz},
         {3, QStringLiteral("osm"), QStringLiteral("OSM"),
          QStringLiteral("https://tile.openstreetmap.org/{z}/{x}/{y}.png"),
-         QStringLiteral("© OpenStreetMap contributors"), 18, true, true},
-        {4, QStringLiteral("opentopomap"), QStringLiteral("OpenTopoMap"),
+         QStringLiteral("© OpenStreetMap contributors"), 18, true, true, MapProjection::TiledXyz},
+        {4, QStringLiteral("earth-night"), QStringLiteral("Earth at Night"),
+         QStringLiteral("https://cdn.jsdelivr.net/npm/three-globe/example/img/earth-night.jpg"),
+         QStringLiteral("NASA Earth Observatory (Black Marble)"), 10, true, true, MapProjection::SingleEquirectangular},
+        {5, QStringLiteral("blue-marble"), QStringLiteral("Blue Marble"),
+         QStringLiteral("https://cdn.jsdelivr.net/npm/three-globe/example/img/earth-blue-marble.jpg"),
+         QStringLiteral("NASA Earth Observatory (Blue Marble)"), 10, true, true, MapProjection::SingleEquirectangular},
+        {6, QStringLiteral("opentopomap"), QStringLiteral("OpenTopoMap"),
          QStringLiteral("https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png"),
-         QStringLiteral("© OpenTopoMap (CC-BY-SA)"), 17, false, true},
-        {5, QStringLiteral("carto-voyager"), QStringLiteral("Voyager"),
+         QStringLiteral("© OpenTopoMap (CC-BY-SA)"), 17, false, true, MapProjection::TiledXyz},
+        {7, QStringLiteral("carto-voyager"), QStringLiteral("Voyager"),
          QStringLiteral("https://basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}.png"),
-         QStringLiteral("© OpenStreetMap, © CARTO"), 18, false, true},
-        {6, QStringLiteral("esri-topo"), QStringLiteral("Esri Topo"),
+         QStringLiteral("© OpenStreetMap, © CARTO"), 18, false, true, MapProjection::TiledXyz},
+        {8, QStringLiteral("esri-topo"), QStringLiteral("Esri Topo"),
          QStringLiteral("https://services.arcgisonline.com/ArcGIS/rest/services/World_Topo_Map/MapServer/tile/{z}/{y}/{x}"),
-         QStringLiteral("© Esri, HERE, Garmin, OpenStreetMap"), 17, false, true},
+         QStringLiteral("© Esri, HERE, Garmin, OpenStreetMap"), 17, false, true, MapProjection::TiledXyz},
     };
 }
 
@@ -66,7 +91,6 @@ void TileManager::invalidateLayerCache(int layerUid) {
         }
     }
 
-    // Clear failed state for this layer so edited URLs retry immediately.
     for (auto it = m_failed.begin(); it != m_failed.end(); ) {
         if (it->layer == layerUid)
             it = m_failed.erase(it);
@@ -153,20 +177,32 @@ int TileManager::maxZoomForLayer(int layer) const {
     return 16;
 }
 
+MapProjection TileManager::projectionForLayer(int layer) const {
+    if (layer == ElevationDemLayer)
+        return MapProjection::TiledXyz;
+    QMutexLocker lock(&m_cacheMutex);
+    auto it = m_layers.constFind(layer);
+    if (it != m_layers.cend())
+        return it.value().projection;
+    return MapProjection::TiledXyz;
+}
+
 QString TileManager::tileUrl(int layer, int z, int x, int y) const {
     if (layer == ElevationDemLayer) {
         return QStringLiteral("https://s3.amazonaws.com/elevation-tiles-prod/terrarium/%1/%2/%3.png")
             .arg(z).arg(x).arg(y);
     }
-    QString tpl;
+    BaseMapSpec spec;
     {
         QMutexLocker lock(&m_cacheMutex);
         auto it = m_layers.constFind(layer);
         if (it == m_layers.cend())
             return {};
-        tpl = it.value().urlTemplate;
+        spec = it.value();
     }
-    return expandUrlTemplate(tpl, z, x, y);
+    if (spec.projection != MapProjection::TiledXyz)
+        return spec.urlTemplate;
+    return expandUrlTemplate(spec.urlTemplate, z, x, y);
 }
 
 QString TileManager::diskPath(const TileKey &key) const {
@@ -175,11 +211,125 @@ QString TileManager::diskPath(const TileKey &key) const {
         .arg(key.z).arg(key.x).arg(key.y);
 }
 
+QString TileManager::singleImageDiskPath(int layer) const {
+    return QStringLiteral("%1/%2/single_image.tile").arg(m_cacheDir, layerSlug(layer));
+}
+
+QImage TileManager::prepareGpuImage(const QImage &img, int maxDim) {
+    if (img.isNull())
+        return {};
+    QImage scaled = img;
+    if (scaled.width() > maxDim || scaled.height() > maxDim)
+        scaled = scaled.scaled(maxDim, maxDim, Qt::KeepAspectRatio, Qt::SmoothTransformation);
+    return scaled.convertToFormat(QImage::Format_RGBA8888);
+}
+
 QImage TileManager::cachedTile(int layer, int z, int x, int y) const {
     const TileKey key{layer, z, x, y};
     QMutexLocker lock(&m_cacheMutex);
     if (auto *img = m_memCache.object(key))
         return *img;
+    return {};
+}
+
+QImage TileManager::cachedSingleImage(int layer) const {
+    return cachedTile(layer, 0, 0, 0);
+}
+
+QImage TileManager::requestSingleImage(int layer) {
+    const TileKey key{layer, 0, 0, 0};
+    {
+        QMutexLocker lock(&m_cacheMutex);
+        if (auto *img = m_memCache.object(key))
+            return *img;
+    }
+
+    const QString source = tileUrl(layer, 0, 0, 0).trimmed();
+    if (source.isEmpty())
+        return {};
+
+    // Direct local file path or file:// URI.
+    const QUrl parsed(source);
+    const bool isLocal = parsed.isLocalFile() ||
+                         (!source.startsWith(QStringLiteral("http://")) &&
+                          !source.startsWith(QStringLiteral("https://")));
+    if (isLocal) {
+        const QString localPath = parsed.isLocalFile() ? parsed.toLocalFile() : source;
+        if (m_failed.contains(key))
+            return {};
+        QImage img;
+        if (!img.load(localPath)) {
+            m_failed.insert(key);
+            emit networkError(tr("Failed to load local map image: %1").arg(localPath));
+            return {};
+        }
+        const QImage rgba = prepareGpuImage(img, 8192);
+        {
+            QMutexLocker lock(&m_cacheMutex);
+            m_memCache.insert(key, new QImage(rgba));
+        }
+        emit tileReady(layer, 0, 0, 0);
+        return rgba;
+    }
+
+    // Check cached remote single image on disk.
+    const QString cacheFile = singleImageDiskPath(layer);
+    if (QFileInfo::exists(cacheFile)) {
+        QImage img;
+        if (img.load(cacheFile)) {
+            const QImage rgba = prepareGpuImage(img, 8192);
+            {
+                QMutexLocker lock(&m_cacheMutex);
+                m_memCache.insert(key, new QImage(rgba));
+            }
+            return rgba;
+        }
+    }
+
+    if (m_inFlight.contains(key) || m_failed.contains(key))
+        return {};
+
+    QNetworkRequest req(parsed);
+    req.setHeader(QNetworkRequest::UserAgentHeader, QStringLiteral("Needleeye/0.1 (Omarchy Linux)"));
+    req.setAttribute(QNetworkRequest::RedirectPolicyAttribute, QNetworkRequest::NoLessSafeRedirectPolicy);
+    req.setTransferTimeout(30000);
+
+    m_inFlight.insert(key);
+    QNetworkReply *reply = m_nam.get(req);
+    connect(reply, &QNetworkReply::finished, this, [this, reply, key, cacheFile]() {
+        reply->deleteLater();
+        m_inFlight.remove(key);
+
+        if (reply->error() != QNetworkReply::NoError) {
+            m_failed.insert(key);
+            emit networkError(tr("Map image load failed (%1): %2").arg(layerSlug(key.layer), reply->errorString()));
+            return;
+        }
+
+        const QByteArray bytes = reply->readAll();
+        QImage img;
+        if (!img.loadFromData(bytes)) {
+            m_failed.insert(key);
+            emit networkError(tr("Unsupported or corrupt map image (%1).").arg(layerSlug(key.layer)));
+            return;
+        }
+
+        QDir().mkpath(QFileInfo(cacheFile).absolutePath());
+        QFile tmp(cacheFile + QStringLiteral(".tmp"));
+        if (tmp.open(QIODevice::WriteOnly)) {
+            tmp.write(bytes);
+            tmp.close();
+            QFile::remove(cacheFile);
+            tmp.rename(cacheFile);
+        }
+
+        const QImage rgba = prepareGpuImage(img, 8192);
+        {
+            QMutexLocker lock(&m_cacheMutex);
+            m_memCache.insert(key, new QImage(rgba));
+        }
+        emit tileReady(key.layer, 0, 0, 0);
+    });
     return {};
 }
 

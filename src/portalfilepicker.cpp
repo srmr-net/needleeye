@@ -64,6 +64,22 @@ PortalFilePicker::PortalFilePicker(QObject *parent) : FilePicker(parent) {
 }
 
 void PortalFilePicker::openKmlFile(const QString &title, Callback callback) {
+    openWithFilters(title, {
+        {tr("KML / KMZ files"), {QStringLiteral("*.kml"), QStringLiteral("*.kmz")}},
+        {tr("All files"), {QStringLiteral("*")}}
+    }, std::move(callback));
+}
+
+void PortalFilePicker::openImageFile(const QString &title, Callback callback) {
+    openWithFilters(title, {
+        {tr("Map images"), {QStringLiteral("*.jpg"), QStringLiteral("*.jpeg"), QStringLiteral("*.png"), QStringLiteral("*.webp")}},
+        {tr("All files"), {QStringLiteral("*")}}
+    }, std::move(callback));
+}
+
+void PortalFilePicker::openWithFilters(const QString &title,
+                                       const QList<QPair<QString, QStringList>> &filterSpecs,
+                                       Callback callback) {
     auto bus = QDBusConnection::sessionBus();
     if (!bus.isConnected()) {
         if (callback)
@@ -89,8 +105,12 @@ void PortalFilePicker::openKmlFile(const QString &title, Callback callback) {
     options.insert(QStringLiteral("multiple"), false);
 
     QList<FileFilter> filters;
-    filters.append({tr("KML / KMZ files"), {{0, QStringLiteral("*.kml")}, {0, QStringLiteral("*.kmz")}}});
-    filters.append({tr("All files"), {{0, QStringLiteral("*")}}});
+    for (const auto &spec : filterSpecs) {
+        QList<FilterRule> rules;
+        for (const QString &pat : spec.second)
+            rules.append({0, pat});
+        filters.append({spec.first, rules});
+    }
     options.insert(QStringLiteral("filters"), QVariant::fromValue(filters));
 
     // Predict the request path so we connect before the reply races in.
@@ -123,7 +143,6 @@ void PortalFilePicker::openKmlFile(const QString &title, Callback callback) {
         return;
     }
 
-    // Rebind if the portal returned a different object path than predicted.
     if (reply.value().path() != m_activeRequestPath) {
         bus.disconnect(QStringLiteral("org.freedesktop.portal.Desktop"), m_activeRequestPath,
                        QStringLiteral("org.freedesktop.portal.Request"), QStringLiteral("Response"),

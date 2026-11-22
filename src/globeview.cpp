@@ -54,6 +54,7 @@ struct MarkerVertex {
 
 struct RenderSnapshot {
     int baseLayer = 0;
+    MapProjection baseProjection = MapProjection::TiledXyz;
     bool terrainEnabled = true;
     double terrainExaggeration = 1.0;
     bool graticuleEnabled = true;
@@ -162,6 +163,9 @@ public:
         if (auto *b = view->controller()) {
             m_snap.tileManager = b->tileManager();
             m_snap.baseLayer = b->baseLayer();
+            m_snap.baseProjection = m_snap.tileManager
+                ? m_snap.tileManager->projectionForLayer(m_snap.baseLayer)
+                : MapProjection::TiledXyz;
             m_snap.terrainEnabled = b->terrainEnabled();
             m_snap.terrainExaggeration = b->terrainExaggeration();
             m_snap.graticuleEnabled = b->graticuleEnabled();
@@ -295,6 +299,7 @@ private:
 
     void buildShaders() {
         // Tile shader: projects Mercator patch onto sphere and displaces by AWS Terrarium DEM.
+        // uProjectionMode: 0 = slippy XYZ tile, 1 = single-image equirectangular, 2 = single-image Web Mercator.
         m_tileProg.addShaderFromSourceCode(QOpenGLShader::Vertex, R"glsl(
             #version 330 core
             layout(location = 0) in vec2 aUv;
@@ -304,10 +309,15 @@ private:
             uniform vec4 uDemUvRect;    // u0, v0, uScale, vScale
             uniform sampler2D uDemTex;
             uniform float uTerrainScale;
+            uniform int uProjectionMode;
 
             out vec2 vColorUv;
             out vec3 vNormal;
             out float vElevNorm;
+
+            const float PI = 3.14159265359;
+            const float HALF_PI = 1.57079632679;
+            const float TWO_PI = 6.28318530718;
 
             void main() {
                 float lon = mix(uBounds.x, uBounds.y, aUv.x);
@@ -315,7 +325,13 @@ private:
                 float lat = atan(sinh(mercY));
 
                 vec3 n = vec3(cos(lat) * sin(lon), sin(lat), cos(lat) * cos(lon));
-                vColorUv = uColorUvRect.xy + aUv * uColorUvRect.zw;
+                if (uProjectionMode == 1) {
+                    vColorUv = vec2((lon + PI) / TWO_PI, (HALF_PI - lat) / PI);
+                } else if (uProjectionMode == 2) {
+                    vColorUv = vec2((lon + PI) / TWO_PI, clamp((PI - mercY) / TWO_PI, 0.0, 1.0));
+                } else {
+                    vColorUv = uColorUvRect.xy + aUv * uColorUvRect.zw;
+                }
 
                 float disp = 0.0;
                 if (uTerrainScale > 0.0) {
@@ -358,6 +374,55 @@ private:
             }
         )glsl");
         m_tileProg.link();
+
+        // Polar cap shader: samples equirectangular single-image textures seamlessly
+        // across the poles, or falls back to dark polar tone for Mercator-bounded maps.
+        m_polarProg.addShaderFromSourceCode(QOpenGLShader::Vertex, R"glsl(
+            #version 330 core
+            layout(location = 0) in vec3 aPos;
+            layout(location = 1) in vec4 aCol;
+            uniform mat4 uVp;
+            out vec3 vNormal;
+            out vec4 vCol;
+            void main() {
+                vNormal = normalize(aPos);
+                vCol = aCol;
+                gl_Position = uVp * vec4(aPos, 1.0);
+            }
+        )glsl");
+        m_polarProg.addShaderFromSourceCode(QOpenGLShader::Fragment, R"glsl(
+            #version 330 core
+            in vec3 vNormal;
+            in vec4 vCol;
+            uniform int uUseEquirectTex;
+            uniform sampler2D uColorTex;
+            uniform vec3 uCamDir;
+            uniform vec3 uAccent;
+            out vec4 fragColor;
+
+            const float PI = 3.14159265359;
+            const float HALF_PI = 1.57079632679;
+            const float TWO_PI = 6.28318530718;
+
+            void main() {
+                if (uUseEquirectTex == 0) {
+                    fragColor = vCol;
+                    return;
+                }
+                vec3 n = normalize(vNormal);
+                float lat = asin(clamp(n.y, -1.0, 1.0));
+                float lon = atan(n.x, n.z);
+                vec2 uv = vec2((lon + PI) / TWO_PI, (HALF_PI - lat) / PI);
+                vec3 col = texture(uColorTex, uv).rgb;
+                float ndv = clamp(dot(n, normalize(uCamDir)), 0.0, 1.0);
+                float shade = 0.72 + 0.28 * pow(ndv, 0.45);
+                col *= shade;
+                float rim = pow(1.0 - ndv, 3.2);
+                col = mix(col, mix(vec3(0.18, 0.42, 0.68), uAccent, 0.35), rim * 0.28);
+                fragColor = vec4(col, 1.0);
+            }
+        )glsl");
+        m_polarProg.link();
 
         // Flat / colored geometry shader for polar caps, graticule, KML lines & polygons.
         m_colorProg.addShaderFromSourceCode(QOpenGLShader::Vertex, R"glsl(
@@ -671,17 +736,37 @@ private:
         return (layer == TileManager::ElevationDemLayer) ? m_flatDemTex : m_fallbackTex;
     }
 
-    GLuint uploadTexture(const QImage &img) {
+    GLuint ensureSingleImageTexture(int layer) {
+        const TileKey key{layer, 0, 0, 0};
+        auto it = m_tileTextures.find(key);
+        if (it != m_tileTextures.end()) {
+            it.value().lastUsedFrame = m_frameCounter;
+            return it.value().tex;
+        }
+        if (m_snap.tileManager) {
+            const QImage img = m_snap.tileManager->cachedSingleImage(layer);
+            if (!img.isNull()) {
+                GLuint tex = uploadTexture(img, true);
+                m_tileTextures.insert(key, {tex, m_frameCounter});
+                return tex;
+            }
+        }
+        return m_fallbackTex;
+    }
+
+    GLuint uploadTexture(const QImage &img, bool mipmap = false) {
         GLuint tex = 0;
         glGenTextures(1, &tex);
         glBindTexture(GL_TEXTURE_2D, tex);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, mipmap ? GL_LINEAR_MIPMAP_LINEAR : GL_LINEAR);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, mipmap ? GL_REPEAT : GL_CLAMP_TO_EDGE);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
         glPixelStorei(GL_UNPACK_ALIGNMENT, 4);
         glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, img.width(), img.height(), 0,
                      GL_RGBA, GL_UNSIGNED_BYTE, img.constBits());
+        if (mipmap)
+            glGenerateMipmap(GL_TEXTURE_2D);
         glBindTexture(GL_TEXTURE_2D, 0);
         return tex;
     }
@@ -702,7 +787,10 @@ private:
 
     void renderTiles(const QMatrix4x4 &vp) {
         ++m_frameCounter;
-        const int layerMaxZoom = m_snap.tileManager ? m_snap.tileManager->maxZoomForLayer(m_snap.baseLayer) : 16;
+        const bool isSingleImage = (m_snap.baseProjection != MapProjection::TiledXyz);
+        const int layerMaxZoom = isSingleImage
+            ? (m_snap.terrainEnabled ? 9 : 4)
+            : (m_snap.tileManager ? m_snap.tileManager->maxZoomForLayer(m_snap.baseLayer) : 16);
         const int maxZoom = std::min(layerMaxZoom,
                                      std::clamp(static_cast<int>(std::ceil(std::log2(3.5 / std::max(0.0005, m_snap.camAltitude)))) + 1, 2, 16));
 
@@ -713,10 +801,13 @@ private:
         collectVisibleTiles(1, 0, 1, maxZoom, m_snap.camPos, vp, tiles);
         collectVisibleTiles(1, 1, 1, maxZoom, m_snap.camPos, vp, tiles);
 
+        const GLuint singleTex = isSingleImage ? ensureSingleImageTexture(m_snap.baseLayer) : 0;
+
         m_tileProg.bind();
         m_tileProg.setUniformValue("uVp", vp);
         m_tileProg.setUniformValue("uCamDir", m_snap.camPos.normalized());
         m_tileProg.setUniformValue("uAccent", QVector3D(m_snap.accent.redF(), m_snap.accent.greenF(), m_snap.accent.blueF()));
+        m_tileProg.setUniformValue("uProjectionMode", static_cast<int>(m_snap.baseProjection));
         // Exaggerate elevation gently from orbit and scale by user exaggeration preference.
         const float terrainScale = m_snap.terrainEnabled
             ? static_cast<float>(std::clamp(1.6 + m_snap.camAltitude * 2.2, 1.6, 5.5) * m_snap.terrainExaggeration)
@@ -729,7 +820,9 @@ private:
         glBindVertexArray(m_patchVao);
         for (const auto &t : tiles) {
             QVector4D colorUv(0, 0, 1, 1);
-            const GLuint colorTex = ensureTileTexture(m_snap.baseLayer, t.z, t.x, t.y, colorUv);
+            const GLuint colorTex = isSingleImage
+                ? singleTex
+                : ensureTileTexture(m_snap.baseLayer, t.z, t.x, t.y, colorUv);
 
             QVector4D demUv(0, 0, 1, 1);
             GLuint demTex = m_flatDemTex;
@@ -770,13 +863,21 @@ private:
     }
 
     void renderPolarCaps(const QMatrix4x4 &vp) {
-        m_colorProg.bind();
-        m_colorProg.setUniformValue("uVp", vp);
-        m_colorProg.setUniformValue("uUseVertexColor", 1.0f);
+        const bool useEquirect = (m_snap.baseProjection == MapProjection::SingleEquirectangular);
+        m_polarProg.bind();
+        m_polarProg.setUniformValue("uVp", vp);
+        m_polarProg.setUniformValue("uUseEquirectTex", useEquirect ? 1 : 0);
+        m_polarProg.setUniformValue("uCamDir", m_snap.camPos.normalized());
+        m_polarProg.setUniformValue("uAccent", QVector3D(m_snap.accent.redF(), m_snap.accent.greenF(), m_snap.accent.blueF()));
+        m_polarProg.setUniformValue("uColorTex", 0);
+        if (useEquirect) {
+            glActiveTexture(GL_TEXTURE0);
+            glBindTexture(GL_TEXTURE_2D, ensureSingleImageTexture(m_snap.baseLayer));
+        }
         glBindVertexArray(m_capsVao);
         glDrawArrays(GL_TRIANGLES, 0, m_capsVertexCount);
         glBindVertexArray(0);
-        m_colorProg.release();
+        m_polarProg.release();
     }
 
     void renderGraticule(const QMatrix4x4 &vp) {
@@ -991,6 +1092,7 @@ private:
     quint64 m_frameCounter = 0;
 
     QOpenGLShaderProgram m_tileProg;
+    QOpenGLShaderProgram m_polarProg;
     QOpenGLShaderProgram m_colorProg;
     QOpenGLShaderProgram m_markerProg;
     QOpenGLShaderProgram m_atmoProg;
@@ -1393,13 +1495,21 @@ void GlobeView::requestNeededTilesForCamera() {
     const QVector3D camPos = cameraWorldPos();
 
     const int layer = m_backend->baseLayer();
-    const int maxZoom = std::min(tm->maxZoomForLayer(layer),
-                                 std::clamp(static_cast<int>(std::ceil(std::log2(3.5 / std::max(0.0005, m_altitude)))) + 1, 2, 16));
+    const MapProjection proj = tm->projectionForLayer(layer);
+    const bool isSingleImage = (proj != MapProjection::TiledXyz);
 
-    // Always ensure zoom 1 root tiles are available as instant fallback.
-    for (int x = 0; x < 2; ++x)
-        for (int y = 0; y < 2; ++y)
-            tm->requestTile(layer, 1, x, y);
+    if (isSingleImage) {
+        tm->requestSingleImage(layer);
+    } else {
+        // Always ensure zoom 1 root tiles are available as instant fallback.
+        for (int x = 0; x < 2; ++x)
+            for (int y = 0; y < 2; ++y)
+                tm->requestTile(layer, 1, x, y);
+    }
+
+    const int layerMaxZoom = isSingleImage ? (m_backend->terrainEnabled() ? 9 : 4) : tm->maxZoomForLayer(layer);
+    const int maxZoom = std::min(layerMaxZoom,
+                                 std::clamp(static_cast<int>(std::ceil(std::log2(3.5 / std::max(0.0005, m_altitude)))) + 1, 2, 16));
 
     QVector<VisibleTile> tiles;
     tiles.reserve(96);
@@ -1409,7 +1519,8 @@ void GlobeView::requestNeededTilesForCamera() {
     collectVisibleTiles(1, 1, 1, maxZoom, camPos, vp, tiles);
 
     for (const auto &t : tiles) {
-        tm->requestTile(layer, t.z, t.x, t.y);
+        if (!isSingleImage)
+            tm->requestTile(layer, t.z, t.x, t.y);
         if (m_backend->terrainEnabled()) {
             const int demZ = std::min(t.z, 10);
             const int shift = t.z - demZ;

@@ -196,6 +196,7 @@ void Backend::loadSettings() {
             spec.maxZoom = std::clamp(obj.value(QStringLiteral("maxZoom")).toInt(18), 1, 20);
             spec.enabled = obj.value(QStringLiteral("enabled")).toBool(true);
             spec.builtin = obj.value(QStringLiteral("builtin")).toBool(false);
+            spec.projection = TileManager::projectionFromString(obj.value(QStringLiteral("projection")).toString());
             seenIds.insert(id);
             loaded.append(spec);
         }
@@ -242,6 +243,7 @@ void Backend::saveSettings() const {
         obj.insert(QStringLiteral("maxZoom"), m.maxZoom);
         obj.insert(QStringLiteral("enabled"), m.enabled);
         obj.insert(QStringLiteral("builtin"), m.builtin);
+        obj.insert(QStringLiteral("projection"), TileManager::projectionToString(m.projection));
         mapsArr.append(obj);
     }
     root.insert(QStringLiteral("baseMaps"), mapsArr);
@@ -307,21 +309,34 @@ QString Backend::makeUniqueBaseMapId(const QString &name) const {
     return candidate;
 }
 
-QString Backend::validateBaseMapInput(const QString &name, const QString &urlTemplate, int maxZoom) {
+QString Backend::validateBaseMapInput(const QString &name, const QString &urlTemplate,
+                                      int maxZoom, const QString &projection) {
     if (name.trimmed().isEmpty())
         return tr("Base map name cannot be empty.");
 
     const QString tpl = urlTemplate.trimmed();
-    if (!tpl.startsWith(QStringLiteral("http://")) && !tpl.startsWith(QStringLiteral("https://")))
-        return tr("URL template must start with http:// or https://.");
+    const MapProjection proj = TileManager::projectionFromString(projection);
 
-    if (!tpl.contains(QStringLiteral("{z}")) || !tpl.contains(QStringLiteral("{x}")) ||
-        (!tpl.contains(QStringLiteral("{y}")) && !tpl.contains(QStringLiteral("{-y}")))) {
-        return tr("URL template must include {z}, {x}, and {y} (or {-y}) placeholders.");
+    if (proj == MapProjection::TiledXyz) {
+        if (!tpl.startsWith(QStringLiteral("http://")) && !tpl.startsWith(QStringLiteral("https://")))
+            return tr("URL template must start with http:// or https://.");
+
+        if (!tpl.contains(QStringLiteral("{z}")) || !tpl.contains(QStringLiteral("{x}")) ||
+            (!tpl.contains(QStringLiteral("{y}")) && !tpl.contains(QStringLiteral("{-y}")))) {
+            return tr("URL template must include {z}, {x}, and {y} (or {-y}) placeholders.");
+        }
+
+        if (maxZoom < 1 || maxZoom > 20)
+            return tr("Max zoom must be between 1 and 20.");
+    } else {
+        if (tpl.isEmpty())
+            return tr("Enter an image URL (http/https) or local image file path.");
+        const bool isRemote = tpl.startsWith(QStringLiteral("http://")) || tpl.startsWith(QStringLiteral("https://"));
+        const QUrl u(tpl);
+        const QString localPath = u.isLocalFile() ? u.toLocalFile() : tpl;
+        if (!isRemote && !QFileInfo::exists(localPath))
+            return tr("Image must be an http(s) URL or an existing local image file.");
     }
-
-    if (maxZoom < 1 || maxZoom > 20)
-        return tr("Max zoom must be between 1 and 20.");
 
     return {};
 }
@@ -394,6 +409,7 @@ QVariantList Backend::baseMapsVariant() const {
         item.insert(QStringLiteral("maxZoom"), m.maxZoom);
         item.insert(QStringLiteral("enabled"), m.enabled);
         item.insert(QStringLiteral("builtin"), m.builtin);
+        item.insert(QStringLiteral("projection"), TileManager::projectionToString(m.projection));
         item.insert(QStringLiteral("active"), m.uid == m_activeBaseMapUid);
         item.insert(QStringLiteral("slot"), m.enabled ? (++enabledSlot) : 0);
         item.insert(QStringLiteral("canMoveUp"), i > 0);
@@ -502,8 +518,9 @@ bool Backend::moveBaseMap(const QString &mapId, int delta) {
 }
 
 QString Backend::addCustomBaseMap(const QString &name, const QString &urlTemplate,
-                                  int maxZoom, const QString &attribution) {
-    const QString err = validateBaseMapInput(name, urlTemplate, maxZoom);
+                                  int maxZoom, const QString &attribution,
+                                  const QString &projection) {
+    const QString err = validateBaseMapInput(name, urlTemplate, maxZoom, projection);
     if (!err.isEmpty())
         return err;
 
@@ -513,7 +530,8 @@ QString Backend::addCustomBaseMap(const QString &name, const QString &urlTemplat
     spec.name = name.trimmed();
     spec.urlTemplate = urlTemplate.trimmed();
     spec.attribution = attribution.trimmed();
-    spec.maxZoom = std::clamp(maxZoom, 1, 20);
+    spec.projection = TileManager::projectionFromString(projection);
+    spec.maxZoom = spec.projection == MapProjection::TiledXyz ? std::clamp(maxZoom, 1, 20) : 10;
     spec.enabled = true;
     spec.builtin = false;
 
@@ -529,19 +547,23 @@ QString Backend::addCustomBaseMap(const QString &name, const QString &urlTemplat
 
 QString Backend::updateBaseMap(const QString &mapId, const QString &name,
                                const QString &urlTemplate, int maxZoom,
-                               const QString &attribution) {
+                               const QString &attribution,
+                               const QString &projection) {
     const int idx = findBaseMapIndexById(mapId);
     if (idx < 0)
         return tr("Base map not found.");
 
-    const QString err = validateBaseMapInput(name, urlTemplate, maxZoom);
+    const QString err = validateBaseMapInput(name, urlTemplate, maxZoom, projection);
     if (!err.isEmpty())
         return err;
 
-    const bool urlChanged = (m_baseMaps[idx].urlTemplate != urlTemplate.trimmed());
+    const MapProjection proj = TileManager::projectionFromString(projection);
+    const bool urlChanged = (m_baseMaps[idx].urlTemplate != urlTemplate.trimmed()) ||
+                            (m_baseMaps[idx].projection != proj);
     m_baseMaps[idx].name = name.trimmed();
     m_baseMaps[idx].urlTemplate = urlTemplate.trimmed();
-    m_baseMaps[idx].maxZoom = std::clamp(maxZoom, 1, 20);
+    m_baseMaps[idx].projection = proj;
+    m_baseMaps[idx].maxZoom = proj == MapProjection::TiledXyz ? std::clamp(maxZoom, 1, 20) : 10;
     m_baseMaps[idx].attribution = attribution.trimmed();
 
     syncBaseMapsToTileManager();
@@ -552,6 +574,17 @@ QString Backend::updateBaseMap(const QString &mapId, const QString &name,
     emit settingsChanged();
     refreshCacheStats();
     return {};
+}
+
+void Backend::browseBaseMapImage() {
+    m_filePicker->openImageFile(tr("Select world map image"), [this](const QString &path, const QString &error) {
+        if (!error.isEmpty()) {
+            setError(error);
+            return;
+        }
+        if (!path.isEmpty())
+            emit baseMapImagePicked(path);
+    });
 }
 
 bool Backend::removeBaseMap(const QString &mapId) {

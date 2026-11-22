@@ -3,6 +3,7 @@
 #include <QFileInfo>
 #include <QGuiApplication>
 #include <QIcon>
+#include <QImageReader>
 #include <QQmlApplicationEngine>
 #include <QQmlContext>
 #include <QQuickStyle>
@@ -31,6 +32,8 @@ int main(int argc, char *argv[]) {
     QGuiApplication app(argc, argv);
     app.setApplicationName("needleeye");
     app.setApplicationVersion("0.1.0");
+    // Allow high-resolution NASA Blue Marble / single-image world textures (up to 512 MB).
+    QImageReader::setAllocationLimit(512);
 
     // Matches the window to needleeye.desktop, so the compositor (Wayland app_id)
     // and the launcher pick up the installed icon.
