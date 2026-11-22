@@ -29,15 +29,15 @@ int main(int argc, char *argv[]) {
     fmt.setSamples(4);
     QSurfaceFormat::setDefaultFormat(fmt);
 
+    // Set identity before QGuiApplication initializes QPA so xdg-desktop-portal
+    // receives the final app ID once instead of rejecting a second registration.
+    QCoreApplication::setApplicationName("needleeye");
+    QCoreApplication::setApplicationVersion("0.1.0");
+    QGuiApplication::setDesktopFileName("needleeye");
+
     QGuiApplication app(argc, argv);
-    app.setApplicationName("needleeye");
-    app.setApplicationVersion("0.1.0");
     // Allow high-resolution NASA Blue Marble / single-image world textures (up to 512 MB).
     QImageReader::setAllocationLimit(512);
-
-    // Matches the window to needleeye.desktop, so the compositor (Wayland app_id)
-    // and the launcher pick up the installed icon.
-    app.setDesktopFileName("needleeye");
     app.setWindowIcon(QIcon::fromTheme("needleeye"));
 
     QQuickStyle::setStyle("Material");
