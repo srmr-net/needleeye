@@ -72,6 +72,7 @@ Item {
                     model: [
                         { key: "/", desc: qsTr("Jump to KML feature or place") },
                         { key: "L", desc: qsTr("Toggle feeds & layers sidebar") },
+                        { key: "H", desc: qsTr("Hide or restore HUD (globe-only mode)") },
                         { key: "O", desc: qsTr("Open local KML / KMZ / CZML file") },
                         { key: "R", desc: qsTr("Refresh active KML feeds") },
                         { key: "Space", desc: qsTr("Play / pause timeline or refresh") },

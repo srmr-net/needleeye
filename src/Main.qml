@@ -19,11 +19,23 @@ ApplicationWindow {
     Material.roundedScale: theme.radius
 
     property bool sidebarVisible: true
+    property bool hudHidden: false
     property bool searchVisible: false
     property bool settingsVisible: false
     property bool helpVisible: false
     property bool textInputFocused: searchOverlay.active || sidebarPanel.urlInputFocused || settingsOverlay.inputFocused
     property bool globeShortcutsEnabled: !win.textInputFocused && !win.settingsVisible && !win.searchVisible && !win.helpVisible
+
+    function toggleHud() {
+        win.hudHidden = !win.hudHidden
+        if (win.hudHidden) {
+            hudHintToast.opacity = 1.0
+            hudHintTimer.restart()
+        } else {
+            hudHintTimer.stop()
+            hudHintToast.opacity = 0.0
+        }
+    }
 
     function openSettings(tabIndex) {
         win.helpVisible = false
@@ -55,7 +67,20 @@ ApplicationWindow {
     Shortcut { sequence: "Ctrl+,"; context: Qt.ApplicationShortcut; onActivated: win.settingsVisible ? (win.settingsVisible = false) : win.openSettings() }
     Shortcut { sequence: "Q"; context: Qt.ApplicationShortcut; enabled: !win.textInputFocused; onActivated: Qt.quit() }
     Shortcut { sequence: "/"; context: Qt.ApplicationShortcut; enabled: win.globeShortcutsEnabled; onActivated: { win.searchVisible = true; searchOverlay.focusInput() } }
-    Shortcut { sequence: "L"; context: Qt.ApplicationShortcut; enabled: win.globeShortcutsEnabled; onActivated: win.sidebarVisible = !win.sidebarVisible }
+    Shortcut {
+        sequence: "L"
+        context: Qt.ApplicationShortcut
+        enabled: win.globeShortcutsEnabled
+        onActivated: {
+            if (win.hudHidden) {
+                win.hudHidden = false
+                win.sidebarVisible = true
+            } else {
+                win.sidebarVisible = !win.sidebarVisible
+            }
+        }
+    }
+    Shortcut { sequence: "H"; context: Qt.ApplicationShortcut; enabled: win.globeShortcutsEnabled; onActivated: win.toggleHud() }
     Shortcut { sequence: "O"; context: Qt.ApplicationShortcut; enabled: win.globeShortcutsEnabled; onActivated: backend.openLocalFileDialog() }
     Shortcut { sequence: "R"; context: Qt.ApplicationShortcut; enabled: win.globeShortcutsEnabled; onActivated: backend.refreshAllFeeds() }
     Shortcut { sequence: "Space"; context: Qt.ApplicationShortcut; enabled: win.globeShortcutsEnabled; onActivated: backend.primaryAction() }
@@ -100,6 +125,8 @@ ApplicationWindow {
                 backend.clearSelection()
             } else if (backend.errorMessage !== "") {
                 backend.dismissError()
+            } else if (win.hudHidden) {
+                win.hudHidden = false
             }
         }
     }
@@ -123,7 +150,7 @@ ApplicationWindow {
 
         // Crisp floating callout tag anchored to the selected KML placemark on the globe.
         Rectangle {
-            visible: globe.selectedMarkerVisible && backend.hasSelection
+            visible: !win.hudHidden && globe.selectedMarkerVisible && backend.hasSelection
             x: Math.max(12, Math.min(root.width - width - 12, globe.selectedMarkerX + 14))
             y: Math.max(56, Math.min(root.height - height - 12, globe.selectedMarkerY - height / 2))
             width: Math.min(260, calloutLabel.implicitWidth + 20)
@@ -150,6 +177,7 @@ ApplicationWindow {
         // Top floating telemetry & quick-action bar.
         Rectangle {
             id: topBar
+            visible: !win.hudHidden
             anchors.top: parent.top
             anchors.left: parent.left
             anchors.right: parent.right
@@ -318,6 +346,40 @@ ApplicationWindow {
                     }
                 }
 
+                // Hide HUD / globe-only button (H).
+                Rectangle {
+                    Layout.preferredHeight: 24
+                    Layout.preferredWidth: zenBtnRow.implicitWidth + 14
+                    radius: Math.min(4, theme.radius)
+                    color: zenBtnMa.containsMouse ? "#28ffffff" : "#14ffffff"
+
+                    Row {
+                        id: zenBtnRow
+                        anchors.centerIn: parent
+                        spacing: 6
+                        Text {
+                            text: qsTr("Hide HUD")
+                            color: theme.foreground
+                            font.pixelSize: 11
+                        }
+                        Text {
+                            text: "H"
+                            color: theme.accent
+                            font.family: "monospace"
+                            font.pixelSize: 11
+                            font.weight: Font.Bold
+                        }
+                    }
+
+                    MouseArea {
+                        id: zenBtnMa
+                        anchors.fill: parent
+                        hoverEnabled: true
+                        cursorShape: Qt.PointingHandCursor
+                        onClicked: win.toggleHud()
+                    }
+                }
+
                 // Settings button (,).
                 Rectangle {
                     Layout.preferredHeight: 24
@@ -384,8 +446,8 @@ ApplicationWindow {
         Rectangle {
             id: errorBanner
             visible: backend.errorMessage !== ""
-            anchors.top: topBar.bottom
-            anchors.topMargin: 8
+            anchors.top: topBar.visible ? topBar.bottom : parent.top
+            anchors.topMargin: topBar.visible ? 8 : 12
             anchors.horizontalCenter: parent.horizontalCenter
             width: Math.min(parent.width - 48, Math.max(360, errorText.implicitWidth + 56))
             height: 36
@@ -435,7 +497,7 @@ ApplicationWindow {
         // Left Feeds & Layers Sidebar.
         SidebarPanel {
             id: sidebarPanel
-            visible: win.sidebarVisible
+            visible: !win.hudHidden && win.sidebarVisible
             anchors.top: topBar.bottom
             anchors.topMargin: 10
             anchors.left: parent.left
@@ -450,7 +512,7 @@ ApplicationWindow {
         // Right Selected Placemark Inspector.
         InspectorPanel {
             id: inspectorPanel
-            visible: backend.hasSelection
+            visible: !win.hudHidden && backend.hasSelection
             anchors.top: topBar.bottom
             anchors.topMargin: 10
             anchors.right: parent.right
@@ -469,7 +531,7 @@ ApplicationWindow {
         // Bottom Timeline Scrubber (when KML feeds carry timestamps).
         TimelineBar {
             id: timelineBar
-            visible: backend.hasTimeline
+            visible: !win.hudHidden && backend.hasTimeline
             anchors.left: parent.left
             anchors.right: parent.right
             anchors.bottom: parent.bottom
@@ -480,7 +542,7 @@ ApplicationWindow {
 
         // Subtle base map attribution watermark.
         Text {
-            visible: backend.baseLayerAttribution !== "" && !timelineBar.visible
+            visible: !win.hudHidden && backend.baseLayerAttribution !== "" && !timelineBar.visible
             anchors.right: inspectorPanel.visible ? inspectorPanel.left : parent.right
             anchors.bottom: parent.bottom
             anchors.margins: 10
@@ -488,6 +550,39 @@ ApplicationWindow {
             color: "#66ffffff"
             font.pixelSize: 10
             z: 5
+        }
+
+        // Brief fading hint when entering globe-only mode so the user always knows how to restore HUD.
+        Timer {
+            id: hudHintTimer
+            interval: 1600
+            onTriggered: hudHintToast.opacity = 0.0
+        }
+
+        Rectangle {
+            id: hudHintToast
+            opacity: 0.0
+            visible: opacity > 0.01
+            anchors.bottom: parent.bottom
+            anchors.bottomMargin: 20
+            anchors.horizontalCenter: parent.horizontalCenter
+            width: hudHintLabel.implicitWidth + 24
+            height: 30
+            radius: Math.min(4, theme.radius)
+            color: Qt.rgba(0.06, 0.06, 0.08, 0.88)
+            border.width: 1
+            border.color: "#28ffffff"
+            z: 15
+
+            Behavior on opacity { NumberAnimation { duration: 300 } }
+
+            Text {
+                id: hudHintLabel
+                anchors.centerIn: parent
+                text: qsTr("HUD hidden — press H or Esc to restore")
+                color: "#ccffffff"
+                font.pixelSize: 11
+            }
         }
 
         // Command / Jump Search Overlay (/).

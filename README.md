@@ -26,6 +26,7 @@ You can also pass local `.kml`/`.kmz` files or feed URLs directly on launch:
 | :--- | :--- |
 | `/` | Jump to loaded KML feature, city, or place (Photon geocode) |
 | `L` | Toggle feeds & layers sidebar |
+| `H` | Hide or restore all HUD panels (globe-only mode) |
 | `O` | Open local `.kml` / `.kmz` file |
 | `R` | Refresh active KML feeds |
 | `Space` | Play / pause timeline (or refresh feeds) |
