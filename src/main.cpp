@@ -1,5 +1,6 @@
-// needleeye — 3D Earth globe and live KML/KMZ situational viewer for Omarchy.
+// needleeye — 3D Earth globe and live KML/KMZ/CZML situational viewer for Omarchy.
 
+#include <QCoreApplication>
 #include <QFileInfo>
 #include <QGuiApplication>
 #include <QIcon>
@@ -12,11 +13,27 @@
 #include <QUrl>
 
 #include "backend.h"
+#include "cli.h"
+#include "dbusservice.h"
 #include "globeview.h"
 #include "theme.h"
 #include "translator.h"
 
 int main(int argc, char *argv[]) {
+    QStringList rawArgs;
+    rawArgs.reserve(argc);
+    for (int i = 0; i < argc; ++i)
+        rawArgs.append(QString::fromLocal8Bit(argv[i]));
+
+    // Headless CLI commands (D-Bus remote control, local file inspect, skill install)
+    // require no display server or OpenGL context.
+    if (Cli::isCliInvocation(rawArgs)) {
+        QCoreApplication cliApp(argc, argv);
+        QCoreApplication::setApplicationName("needleeye");
+        QCoreApplication::setApplicationVersion("0.1.0");
+        return Cli::run(rawArgs);
+    }
+
     // QQuickFramebufferObject requires the OpenGL scenegraph backend in Qt 6.
     QQuickWindow::setGraphicsApi(QSGRendererInterface::OpenGL);
 
@@ -50,9 +67,11 @@ int main(int argc, char *argv[]) {
     Theme theme;
     Backend backend;
 
-    // Open any local .kml/.kmz files passed on the command line.
+    // Open any local .kml/.kmz/.czml files or feed URLs passed on the command line
+    // (supports both `needleeye file.kml` and `needleeye open file.kml`).
     const QStringList args = app.arguments();
-    for (int i = 1; i < args.size(); ++i) {
+    int startIdx = (args.size() >= 2 && args[1] == QLatin1String("open")) ? 2 : 1;
+    for (int i = startIdx; i < args.size(); ++i) {
         if (args[i].startsWith('-'))
             continue;
         if (QFileInfo::exists(args[i]))
@@ -71,6 +90,12 @@ int main(int argc, char *argv[]) {
     engine.load(QUrl("qrc:/Main.qml"));
     if (engine.rootObjects().isEmpty())
         return 1;
+
+    auto *rootWindow = qobject_cast<QQuickWindow *>(engine.rootObjects().first());
+    auto *globeView = rootWindow ? rootWindow->findChild<GlobeView *>(QStringLiteral("globeView")) : nullptr;
+
+    DbusService dbusService(&backend, globeView, rootWindow);
+    dbusService.registerOnSessionBus();
 
     return app.exec();
 }

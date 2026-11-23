@@ -14,11 +14,18 @@ A native C++ / Qt 6 Quick 3D Earth globe and live KML/KMZ situational viewer bui
 ./bin/install    # packages and installs via makepkg -fsi
 ```
 
-You can also pass local `.kml`/`.kmz` files or feed URLs directly on launch:
+You can also pass local `.kml`/`.kmz`/`.czml` files or feed URLs directly on launch, or drive a running instance from scripts and AI agents via CLI / Session D-Bus (`org.needleeye.App`):
 
 ```sh
-./build/needleeye path/to/events.kmz
+./build/needleeye path/to/events.czml
+./build/needleeye status --json
+./build/needleeye fly 64.1466 -21.9426 --alt 600 --instant --json
+./build/needleeye set --day-night on --hud off --json
+./build/needleeye screenshot /tmp/globe.png --json
+./build/needleeye skill install
 ```
+
+See [docs/automation.md](docs/automation.md) for the complete D-Bus interface (`org.needleeye.App`), CLI reference, and agent skill documentation.
 
 ## Keyboard Shortcuts
 

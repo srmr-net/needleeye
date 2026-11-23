@@ -9,7 +9,10 @@ INCLUDEPATH += ../src
 
 HEADERS += \
     ../src/backend.h \
+    ../src/cli.h \
     ../src/czmlparser.h \
+    ../src/dbusservice.h \
+    ../src/globeview.h \
     ../src/kmlparser.h \
     ../src/portalfilepicker.h \
     ../src/theme.h \
@@ -19,7 +22,10 @@ HEADERS += \
 SOURCES += \
     needleeye_tests.cpp \
     ../src/backend.cpp \
+    ../src/cli.cpp \
     ../src/czmlparser.cpp \
+    ../src/dbusservice.cpp \
+    ../src/globeview.cpp \
     ../src/kmlparser.cpp \
     ../src/portalfilepicker.cpp \
     ../src/theme.cpp \

@@ -1328,14 +1328,40 @@ QMatrix4x4 GlobeView::projectionMatrix(float aspect) const {
 }
 
 void GlobeView::flyTo(double lat, double lon, double altitudeRadii) {
-    m_flying = true;
+    setView(lat, lon, altitudeRadii, m_pitch, m_heading, false);
+}
+
+void GlobeView::setView(double lat, double lon, double altitudeRadii,
+                        double pitchDeg, double headingDeg, bool instant) {
     m_velLat = 0.0;
     m_velLon = 0.0;
-    m_targetLat = std::clamp(lat, -84.0, 84.0);
-    m_targetLon = wrapLon(lon);
-    m_targetAlt = std::clamp(altitudeRadii, 0.001, 3.2);
-    m_targetPitch = m_pitch;
-    m_targetHeading = m_heading;
+    const double clampedLat = std::clamp(lat, -84.0, 84.0);
+    const double wrappedLon = wrapLon(lon);
+    const double clampedAlt = std::clamp(altitudeRadii, 0.0008, 3.2);
+    const double clampedPitch = std::clamp(pitchDeg, 0.0, 62.0);
+    const double wrappedHead = wrapLon(headingDeg);
+
+    if (instant) {
+        m_flying = false;
+        m_animTimer.stop();
+        m_lat = clampedLat;
+        m_lon = wrappedLon;
+        m_altitude = clampedAlt;
+        m_pitch = clampedPitch;
+        m_heading = wrappedHead;
+        requestNeededTilesForCamera();
+        updateSelectedMarkerProjection();
+        emit cameraChanged();
+        update();
+        return;
+    }
+
+    m_flying = true;
+    m_targetLat = clampedLat;
+    m_targetLon = wrappedLon;
+    m_targetAlt = clampedAlt;
+    m_targetPitch = clampedPitch;
+    m_targetHeading = wrappedHead;
     if (!m_animTimer.isActive())
         m_animTimer.start();
 }

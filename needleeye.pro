@@ -8,7 +8,9 @@ LIBS += -lzip -lGL
 
 HEADERS += \
     src/backend.h \
+    src/cli.h \
     src/czmlparser.h \
+    src/dbusservice.h \
     src/globeview.h \
     src/kmlparser.h \
     src/portalfilepicker.h \
@@ -19,7 +21,9 @@ HEADERS += \
 SOURCES += \
     src/main.cpp \
     src/backend.cpp \
+    src/cli.cpp \
     src/czmlparser.cpp \
+    src/dbusservice.cpp \
     src/globeview.cpp \
     src/kmlparser.cpp \
     src/portalfilepicker.cpp \

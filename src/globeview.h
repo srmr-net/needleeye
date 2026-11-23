@@ -71,6 +71,8 @@ public:
     static void vec3ToLatLon(const QVector3D &p, double &latDeg, double &lonDeg);
 
     Q_INVOKABLE void flyTo(double lat, double lon, double altitudeRadii = 0.45);
+    Q_INVOKABLE void setView(double lat, double lon, double altitudeRadii,
+                             double pitchDeg, double headingDeg, bool instant = false);
     Q_INVOKABLE void zoomBy(double factor);
     Q_INVOKABLE void panBy(double dLatDeg, double dLonDeg);
     Q_INVOKABLE void tiltBy(double dPitchDeg);

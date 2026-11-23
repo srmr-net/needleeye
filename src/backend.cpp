@@ -474,6 +474,49 @@ void Backend::selectBaseMap(const QString &mapId) {
     emit baseMapsChanged();
 }
 
+bool Backend::selectBaseMapFlexible(const QString &idNameOrSlot) {
+    const QString key = idNameOrSlot.trimmed();
+    if (key.isEmpty())
+        return false;
+
+    // 1. Exact ID match.
+    int idx = findBaseMapIndexById(key);
+    if (idx >= 0) {
+        selectBaseMap(m_baseMaps[idx].id);
+        return true;
+    }
+
+    // 2. 1-based enabled slot number ("1".."9").
+    bool isNum = false;
+    const int slot = key.toInt(&isNum);
+    if (isNum && slot >= 1) {
+        int seen = 0;
+        for (const auto &m : m_baseMaps) {
+            if (!m.enabled)
+                continue;
+            if (++seen == slot) {
+                setBaseLayer(m.uid);
+                return true;
+            }
+        }
+    }
+
+    // 3. Case-insensitive name match (exact first, then substring).
+    for (const auto &m : m_baseMaps) {
+        if (m.name.compare(key, Qt::CaseInsensitive) == 0) {
+            selectBaseMap(m.id);
+            return true;
+        }
+    }
+    for (const auto &m : m_baseMaps) {
+        if (m.name.contains(key, Qt::CaseInsensitive) || m.id.contains(key, Qt::CaseInsensitive)) {
+            selectBaseMap(m.id);
+            return true;
+        }
+    }
+    return false;
+}
+
 void Backend::selectBaseMapBySlot(int slotIndex) {
     if (slotIndex < 0)
         return;
@@ -699,6 +742,20 @@ void Backend::setDayNightEnabled(bool enabled) {
     m_dayNightEnabled = enabled;
     saveSettings();
     emit settingsChanged();
+}
+
+void Backend::setHudHidden(bool hidden) {
+    if (m_hudHidden == hidden)
+        return;
+    m_hudHidden = hidden;
+    emit hudChanged();
+}
+
+void Backend::setSidebarVisible(bool visible) {
+    if (m_sidebarVisible == visible)
+        return;
+    m_sidebarVisible = visible;
+    emit hudChanged();
 }
 
 QVector3D Backend::computeSunDirection(const QDateTime &utcTime,
@@ -929,15 +986,35 @@ void Backend::toggleFeed(const QString &feedId) {
     const int idx = findFeedIndex(feedId);
     if (idx < 0)
         return;
-    m_feeds[idx].enabled = !m_feeds[idx].enabled;
+    setFeedEnabled(feedId, !m_feeds[idx].enabled);
+}
+
+bool Backend::setFeedEnabled(const QString &feedIdOrName, bool enabled) {
+    int idx = findFeedIndex(feedIdOrName);
+    if (idx < 0) {
+        for (int i = 0; i < m_feeds.size(); ++i) {
+            if (m_feeds[i].name.compare(feedIdOrName, Qt::CaseInsensitive) == 0 ||
+                m_feeds[i].name.contains(feedIdOrName, Qt::CaseInsensitive)) {
+                idx = i;
+                break;
+            }
+        }
+    }
+    if (idx < 0)
+        return false;
+    if (m_feeds[idx].enabled == enabled)
+        return true;
+
+    m_feeds[idx].enabled = enabled;
     emit feedsChanged();
     if (m_feeds[idx].enabled && m_feeds[idx].placemarks.isEmpty() && !m_feeds[idx].isLocal) {
-        refreshFeed(feedId);
+        refreshFeed(m_feeds[idx].id);
     } else {
         recomputeTimeRange();
         rebuildVisiblePlacemarks();
         emit foldersChanged();
     }
+    return true;
 }
 
 void Backend::refreshAllFeeds() {
@@ -1118,15 +1195,15 @@ bool Backend::ingestKmlBytesForFeed(const QString &feedId, const QByteArray &dat
     return true;
 }
 
-void Backend::addFeedUrl(const QString &url, const QString &name) {
+QString Backend::addFeedUrl(const QString &url, const QString &name) {
     const QString trimmed = url.trimmed();
     if (trimmed.isEmpty())
-        return;
+        return {};
 
     const QUrl parsed(trimmed);
     if (!parsed.isValid() || (parsed.scheme() != QLatin1String("http") && parsed.scheme() != QLatin1String("https"))) {
         setError(tr("Enter a valid http:// or https:// KML, KMZ, or CZML URL."));
-        return;
+        return {};
     }
 
     const QString id = QStringLiteral("custom-%1").arg(QDateTime::currentMSecsSinceEpoch());
@@ -1141,12 +1218,13 @@ void Backend::addFeedUrl(const QString &url, const QString &name) {
 
     emit feedsChanged();
     refreshFeed(id);
+    return id;
 }
 
-void Backend::removeFeed(const QString &feedId) {
+bool Backend::removeFeed(const QString &feedId) {
     const int idx = findFeedIndex(feedId);
     if (idx < 0)
-        return;
+        return false;
     m_feeds.removeAt(idx);
     if (!m_selectedId.isEmpty() && m_selectedId.startsWith(feedId + QStringLiteral(":"))) {
         m_selectedId.clear();
@@ -1156,6 +1234,7 @@ void Backend::removeFeed(const QString &feedId) {
     rebuildVisiblePlacemarks();
     emit feedsChanged();
     emit foldersChanged();
+    return true;
 }
 
 void Backend::openLocalFileDialog() {
@@ -1169,7 +1248,7 @@ void Backend::openLocalFileDialog() {
     });
 }
 
-bool Backend::loadLocalFile(const QString &filePath) {
+bool Backend::loadLocalFile(const QString &filePath, const QString &displayName) {
     const QString id = QStringLiteral("file-%1").arg(QDateTime::currentMSecsSinceEpoch());
     KmlDocument doc = parseGeospatialFile(filePath, id);
     if (!doc.error.isEmpty()) {
@@ -1179,7 +1258,9 @@ bool Backend::loadLocalFile(const QString &filePath) {
 
     FeedEntry entry;
     entry.id = id;
-    entry.name = doc.name.isEmpty() ? QFileInfo(filePath).fileName() : doc.name;
+    entry.name = !displayName.trimmed().isEmpty()
+        ? displayName.trimmed()
+        : (doc.name.isEmpty() ? QFileInfo(filePath).fileName() : doc.name);
     entry.source = filePath;
     entry.isLocal = true;
     entry.enabled = true;
@@ -1212,26 +1293,56 @@ void Backend::toggleFolder(const QString &feedId, const QString &folderPath) {
     emit foldersChanged();
 }
 
-void Backend::selectPlacemark(const QString &placemarkId, bool flyTo) {
+QString Backend::findPlacemarkId(const QString &idOrName) const {
+    const QString q = idOrName.trimmed();
+    if (q.isEmpty())
+        return {};
+    for (const auto &pm : m_visiblePlacemarks) {
+        if (pm.id == q)
+            return pm.id;
+    }
+    for (const auto &pm : m_visiblePlacemarks) {
+        if (pm.name.compare(q, Qt::CaseInsensitive) == 0)
+            return pm.id;
+    }
+    for (const auto &pm : m_visiblePlacemarks) {
+        if (pm.name.contains(q, Qt::CaseInsensitive) || pm.id.endsWith(QStringLiteral(":") + q))
+            return pm.id;
+    }
+    for (const auto &feed : m_feeds) {
+        for (const auto &pm : feed.placemarks) {
+            if (pm.id == q || pm.name.compare(q, Qt::CaseInsensitive) == 0)
+                return pm.id;
+        }
+    }
+    return {};
+}
+
+bool Backend::selectPlacemark(const QString &placemarkId, bool flyTo) {
     if (placemarkId.isEmpty()) {
         clearSelection();
-        return;
+        return true;
     }
+
+    const QString resolvedId = findPlacemarkId(placemarkId);
+    if (resolvedId.isEmpty())
+        return false;
 
     for (const auto &feed : m_feeds) {
         for (const auto &pm : feed.placemarks) {
-            if (pm.id != placemarkId)
+            if (pm.id != resolvedId)
                 continue;
-            m_selectedId = placemarkId;
+            m_selectedId = resolvedId;
             emit selectionChanged();
             if (flyTo) {
                 const GeoCoord c = pm.anchor();
                 const double alt = pm.lookAt.valid ? rangeMetersToAltitudeRadii(pm.lookAt.range) : 0.35;
                 emit flyToRequested(c.lat, c.lon, alt);
             }
-            return;
+            return true;
         }
     }
+    return false;
 }
 
 void Backend::clearSelection() {

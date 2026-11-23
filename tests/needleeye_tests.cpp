@@ -6,7 +6,9 @@
 #include <zip.h>
 
 #include "backend.h"
+#include "cli.h"
 #include "czmlparser.h"
+#include "dbusservice.h"
 #include "kmlparser.h"
 #include "theme.h"
 #include "tilemanager.h"
@@ -388,6 +390,68 @@ private slots:
         QVERIFY(backend.hasTimeline());
         backend.setTimelineProgress(0.5);
         QCOMPARE(backend.visiblePlacemarkList().first().anchor().lon, 30.0);
+    }
+
+    void dbusServiceAndCliAutomateStateFeaturesAndSkillInstall() {
+        QTemporaryDir dir;
+        TileManager tm(dir.filePath(QStringLiteral("tiles")));
+        FakeFilePicker picker;
+        Backend backend(&tm, &picker, false, dir.filePath(QStringLiteral("settings.json")));
+        DbusService svc(&backend);
+
+        auto parseObj = [](const QString &json) {
+            return QJsonDocument::fromJson(json.toUtf8()).object();
+        };
+
+        // Initial state & display toggles via DbusService.
+        const QJsonObject st1 = parseObj(svc.GetState());
+        QVERIFY(st1.value(QStringLiteral("ok")).toBool());
+        QCOMPARE(st1.value(QStringLiteral("hudHidden")).toBool(), false);
+
+        QVERIFY(parseObj(svc.SetHudHidden(true)).value(QStringLiteral("ok")).toBool());
+        QVERIFY(parseObj(svc.SetDayNight(true)).value(QStringLiteral("ok")).toBool());
+        QVERIFY(parseObj(svc.SetBaseMap(QStringLiteral("earth-night"))).value(QStringLiteral("ok")).toBool());
+        QVERIFY(!parseObj(svc.SetBaseMap(QStringLiteral("nonexistent-map"))).value(QStringLiteral("ok")).toBool());
+
+        const QJsonObject st2 = parseObj(svc.GetState());
+        QCOMPARE(st2.value(QStringLiteral("hudHidden")).toBool(), true);
+        QCOMPARE(st2.value(QStringLiteral("dayNight")).toBool(), true);
+        QCOMPARE(st2.value(QStringLiteral("baseMapId")).toString(), QStringLiteral("earth-night"));
+
+        // Load a local KML file through LoadSource, then query & select features.
+        const QString kmlPath = dir.filePath(QStringLiteral("events.kml"));
+        write(kmlPath, sampleTimelineKml());
+        const QJsonObject loadRes = parseObj(svc.LoadSource(kmlPath, QStringLiteral("Test Quakes")));
+        QVERIFY(loadRes.value(QStringLiteral("ok")).toBool());
+        QCOMPARE(loadRes.value(QStringLiteral("visibleFeatures")).toInt(), 2);
+
+        const QJsonObject featRes = parseObj(svc.ListFeatures(QStringLiteral("Beta"), 10));
+        QVERIFY(featRes.value(QStringLiteral("ok")).toBool());
+        QCOMPARE(featRes.value(QStringLiteral("returned")).toInt(), 1);
+
+        const QJsonObject selRes = parseObj(svc.SelectFeature(QStringLiteral("Quake Beta"), false));
+        QVERIFY(selRes.value(QStringLiteral("ok")).toBool());
+        QCOMPARE(selRes.value(QStringLiteral("selected")).toBool(), true);
+
+        const QJsonObject tlRes = parseObj(svc.SetTimeline(true, 0.05, false));
+        QVERIFY(tlRes.value(QStringLiteral("ok")).toBool());
+        QCOMPARE(backend.visiblePlacemarks(), 1);
+
+        // Verify offline CLI file inspection & skill installation.
+        QVERIFY(Cli::isCliInvocation({QStringLiteral("needleeye"), QStringLiteral("status")}));
+        QVERIFY(Cli::isCliInvocation({QStringLiteral("needleeye"), QStringLiteral("fly"), QStringLiteral("10"), QStringLiteral("20")}));
+        QVERIFY(!Cli::isCliInvocation({QStringLiteral("needleeye"), QStringLiteral("open"), kmlPath}));
+        QVERIFY(!Cli::isCliInvocation({QStringLiteral("needleeye"), kmlPath}));
+
+        const QJsonObject inspectRes = parseObj(Cli::inspectFileJson(kmlPath, 10));
+        QVERIFY(inspectRes.value(QStringLiteral("ok")).toBool());
+        QCOMPARE(inspectRes.value(QStringLiteral("format")).toString(), QStringLiteral("kml"));
+        QCOMPARE(inspectRes.value(QStringLiteral("featureCount")).toInt(), 2);
+
+        const QString skillOutDir = dir.filePath(QStringLiteral("skills/needleeye"));
+        const QJsonObject skillRes = parseObj(Cli::installSkillJson(skillOutDir, QStringLiteral("# Needleeye Skill\n")));
+        QVERIFY(skillRes.value(QStringLiteral("ok")).toBool());
+        QVERIFY(QFileInfo::exists(skillOutDir + QStringLiteral("/SKILL.md")));
     }
 
     void themeFallsBack() {

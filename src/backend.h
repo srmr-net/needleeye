@@ -44,6 +44,8 @@ class Backend : public QObject {
     Q_PROPERTY(bool graticuleEnabled READ graticuleEnabled WRITE setGraticuleEnabled NOTIFY settingsChanged)
     Q_PROPERTY(bool atmosphereEnabled READ atmosphereEnabled WRITE setAtmosphereEnabled NOTIFY settingsChanged)
     Q_PROPERTY(bool dayNightEnabled READ dayNightEnabled WRITE setDayNightEnabled NOTIFY settingsChanged)
+    Q_PROPERTY(bool hudHidden READ hudHidden WRITE setHudHidden NOTIFY hudChanged)
+    Q_PROPERTY(bool sidebarVisible READ sidebarVisible WRITE setSidebarVisible NOTIFY hudChanged)
     Q_PROPERTY(bool autoRefreshEnabled READ autoRefreshEnabled WRITE setAutoRefreshEnabled NOTIFY settingsChanged)
     Q_PROPERTY(int autoRefreshMinutes READ autoRefreshMinutes WRITE setAutoRefreshMinutes NOTIFY settingsChanged)
     Q_PROPERTY(QString cacheSummary READ cacheSummary NOTIFY cacheStatsChanged)
@@ -97,6 +99,13 @@ public:
 
     bool dayNightEnabled() const { return m_dayNightEnabled; }
     void setDayNightEnabled(bool enabled);
+
+    bool hudHidden() const { return m_hudHidden; }
+    void setHudHidden(bool hidden);
+
+    bool sidebarVisible() const { return m_sidebarVisible; }
+    void setSidebarVisible(bool visible);
+
     QVector3D sunDirection() const;
     static QVector3D computeSunDirection(const QDateTime &utcTime,
                                          double *outSubsolarLatDeg = nullptr,
@@ -140,6 +149,7 @@ public:
 
     // Base map management actions.
     Q_INVOKABLE void selectBaseMap(const QString &mapId);
+    Q_INVOKABLE bool selectBaseMapFlexible(const QString &idNameOrSlot);
     Q_INVOKABLE void selectBaseMapBySlot(int slotIndex);
     Q_INVOKABLE void cycleBaseMap();
     Q_INVOKABLE bool setBaseMapEnabled(const QString &mapId, bool enabled);
@@ -160,14 +170,16 @@ public:
     // KML & globe actions.
     Q_INVOKABLE void primaryAction();
     Q_INVOKABLE void toggleFeed(const QString &feedId);
+    Q_INVOKABLE bool setFeedEnabled(const QString &feedIdOrName, bool enabled);
     Q_INVOKABLE void refreshAllFeeds();
     Q_INVOKABLE void refreshFeed(const QString &feedId);
-    Q_INVOKABLE void addFeedUrl(const QString &url, const QString &name = {});
-    Q_INVOKABLE void removeFeed(const QString &feedId);
+    Q_INVOKABLE QString addFeedUrl(const QString &url, const QString &name = {});
+    Q_INVOKABLE bool removeFeed(const QString &feedId);
     Q_INVOKABLE void openLocalFileDialog();
-    Q_INVOKABLE bool loadLocalFile(const QString &filePath);
+    Q_INVOKABLE bool loadLocalFile(const QString &filePath, const QString &displayName = {});
     Q_INVOKABLE void toggleFolder(const QString &feedId, const QString &folderPath);
-    Q_INVOKABLE void selectPlacemark(const QString &placemarkId, bool flyTo = true);
+    Q_INVOKABLE bool selectPlacemark(const QString &placemarkId, bool flyTo = true);
+    Q_INVOKABLE QString findPlacemarkId(const QString &idOrName) const;
     Q_INVOKABLE void clearSelection();
     Q_INVOKABLE void dismissError();
     Q_INVOKABLE void stepTimeline(double delta);
@@ -182,6 +194,7 @@ public:
 
 signals:
     void settingsChanged();
+    void hudChanged();
     void baseMapsChanged();
     void baseMapImagePicked(const QString &path);
     void cacheStatsChanged();
@@ -231,6 +244,8 @@ private:
     bool m_graticuleEnabled = true;
     bool m_atmosphereEnabled = true;
     bool m_dayNightEnabled = false;
+    bool m_hudHidden = false;
+    bool m_sidebarVisible = true;
     bool m_autoRefreshEnabled = true;
     int m_autoRefreshMinutes = 5;
     QString m_cacheSummary;

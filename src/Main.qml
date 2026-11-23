@@ -18,8 +18,6 @@ ApplicationWindow {
     Material.accent: theme.accent
     Material.roundedScale: theme.radius
 
-    property bool sidebarVisible: true
-    property bool hudHidden: false
     property bool searchVisible: false
     property bool settingsVisible: false
     property bool helpVisible: false
@@ -27,8 +25,8 @@ ApplicationWindow {
     property bool globeShortcutsEnabled: !win.textInputFocused && !win.settingsVisible && !win.searchVisible && !win.helpVisible
 
     function toggleHud() {
-        win.hudHidden = !win.hudHidden
-        if (win.hudHidden) {
+        backend.hudHidden = !backend.hudHidden
+        if (backend.hudHidden) {
             hudHintToast.opacity = 1.0
             hudHintTimer.restart()
         } else {
@@ -72,11 +70,11 @@ ApplicationWindow {
         context: Qt.ApplicationShortcut
         enabled: win.globeShortcutsEnabled
         onActivated: {
-            if (win.hudHidden) {
-                win.hudHidden = false
-                win.sidebarVisible = true
+            if (backend.hudHidden) {
+                backend.hudHidden = false
+                backend.sidebarVisible = true
             } else {
-                win.sidebarVisible = !win.sidebarVisible
+                backend.sidebarVisible = !backend.sidebarVisible
             }
         }
     }
@@ -125,8 +123,8 @@ ApplicationWindow {
                 backend.clearSelection()
             } else if (backend.errorMessage !== "") {
                 backend.dismissError()
-            } else if (win.hudHidden) {
-                win.hudHidden = false
+            } else if (backend.hudHidden) {
+                backend.hudHidden = false
             }
         }
     }
@@ -141,6 +139,7 @@ ApplicationWindow {
         // Full-bleed OpenGL 3D Globe viewport.
         GlobeView {
             id: globe
+            objectName: "globeView"
             anchors.fill: parent
             enabled: !win.settingsVisible && !win.searchVisible && !win.helpVisible
             controller: backend
@@ -150,7 +149,7 @@ ApplicationWindow {
 
         // Crisp floating callout tag anchored to the selected KML placemark on the globe.
         Rectangle {
-            visible: !win.hudHidden && globe.selectedMarkerVisible && backend.hasSelection
+            visible: !backend.hudHidden && globe.selectedMarkerVisible && backend.hasSelection
             x: Math.max(12, Math.min(root.width - width - 12, globe.selectedMarkerX + 14))
             y: Math.max(56, Math.min(root.height - height - 12, globe.selectedMarkerY - height / 2))
             width: Math.min(260, calloutLabel.implicitWidth + 20)
@@ -177,7 +176,7 @@ ApplicationWindow {
         // Top floating telemetry & quick-action bar.
         Rectangle {
             id: topBar
-            visible: !win.hudHidden
+            visible: !backend.hudHidden
             anchors.top: parent.top
             anchors.left: parent.left
             anchors.right: parent.right
@@ -316,7 +315,7 @@ ApplicationWindow {
                     Layout.preferredHeight: 24
                     Layout.preferredWidth: layersBtnRow.implicitWidth + 14
                     radius: Math.min(4, theme.radius)
-                    color: win.sidebarVisible ? theme.accent : (layersBtnMa.containsMouse ? "#28ffffff" : "#14ffffff")
+                    color: backend.sidebarVisible ? theme.accent : (layersBtnMa.containsMouse ? "#28ffffff" : "#14ffffff")
 
                     Row {
                         id: layersBtnRow
@@ -324,13 +323,13 @@ ApplicationWindow {
                         spacing: 6
                         Text {
                             text: qsTr("Layers")
-                            color: win.sidebarVisible ? theme.accentForeground : theme.foreground
+                            color: backend.sidebarVisible ? theme.accentForeground : theme.foreground
                             font.pixelSize: 11
-                            font.weight: win.sidebarVisible ? Font.DemiBold : Font.Normal
+                            font.weight: backend.sidebarVisible ? Font.DemiBold : Font.Normal
                         }
                         Text {
                             text: "L"
-                            color: win.sidebarVisible ? theme.accentForeground : theme.accent
+                            color: backend.sidebarVisible ? theme.accentForeground : theme.accent
                             font.family: "monospace"
                             font.pixelSize: 11
                             font.weight: Font.Bold
@@ -342,7 +341,7 @@ ApplicationWindow {
                         anchors.fill: parent
                         hoverEnabled: true
                         cursorShape: Qt.PointingHandCursor
-                        onClicked: win.sidebarVisible = !win.sidebarVisible
+                        onClicked: backend.sidebarVisible = !backend.sidebarVisible
                     }
                 }
 
@@ -497,7 +496,7 @@ ApplicationWindow {
         // Left Feeds & Layers Sidebar.
         SidebarPanel {
             id: sidebarPanel
-            visible: !win.hudHidden && win.sidebarVisible
+            visible: !backend.hudHidden && backend.sidebarVisible
             anchors.top: topBar.bottom
             anchors.topMargin: 10
             anchors.left: parent.left
@@ -512,7 +511,7 @@ ApplicationWindow {
         // Right Selected Placemark Inspector.
         InspectorPanel {
             id: inspectorPanel
-            visible: !win.hudHidden && backend.hasSelection
+            visible: !backend.hudHidden && backend.hasSelection
             anchors.top: topBar.bottom
             anchors.topMargin: 10
             anchors.right: parent.right
@@ -531,7 +530,7 @@ ApplicationWindow {
         // Bottom Timeline Scrubber (when KML feeds carry timestamps).
         TimelineBar {
             id: timelineBar
-            visible: !win.hudHidden && backend.hasTimeline
+            visible: !backend.hudHidden && backend.hasTimeline
             anchors.left: parent.left
             anchors.right: parent.right
             anchors.bottom: parent.bottom
@@ -542,7 +541,7 @@ ApplicationWindow {
 
         // Subtle base map attribution watermark.
         Text {
-            visible: !win.hudHidden && backend.baseLayerAttribution !== "" && !timelineBar.visible
+            visible: !backend.hudHidden && backend.baseLayerAttribution !== "" && !timelineBar.visible
             anchors.right: inspectorPanel.visible ? inspectorPanel.left : parent.right
             anchors.bottom: parent.bottom
             anchors.margins: 10
