@@ -100,9 +100,49 @@ struct VisibleTile {
     int y = 0;
 };
 
-// Recursively selects Web Mercator tiles around the camera view frustum.
+struct FrustumPlanes {
+    QVector4D planes[6]; // normalized (nx, ny, nz, d) with inward-pointing normal
+};
+
+FrustumPlanes extractFrustumPlanes(const QMatrix4x4 &vp) {
+    FrustumPlanes f;
+    const QVector4D r0 = vp.row(0);
+    const QVector4D r1 = vp.row(1);
+    const QVector4D r2 = vp.row(2);
+    const QVector4D r3 = vp.row(3);
+    f.planes[0] = r3 + r0; // Left
+    f.planes[1] = r3 - r0; // Right
+    f.planes[2] = r3 + r1; // Bottom
+    f.planes[3] = r3 - r1; // Top
+    f.planes[4] = r3 + r2; // Near
+    f.planes[5] = r3 - r2; // Far
+    for (int i = 0; i < 6; ++i) {
+        const float len = f.planes[i].toVector3D().length();
+        if (len > 1e-6f)
+            f.planes[i] /= len;
+    }
+    return f;
+}
+
+bool sphereIntersectsFrustum(const FrustumPlanes &f, const QVector3D &center, float radius) {
+    for (int i = 0; i < 6; ++i) {
+        const float dist = QVector3D::dotProduct(f.planes[i].toVector3D(), center) + f.planes[i].w();
+        if (dist < -radius)
+            return false;
+    }
+    return true;
+}
+
+QVector3D unitSphereRad(double latRad, double lonRad) {
+    return QVector3D(
+        static_cast<float>(std::cos(latRad) * std::sin(lonRad)),
+        static_cast<float>(std::sin(latRad)),
+        static_cast<float>(std::cos(latRad) * std::cos(lonRad)));
+}
+
+// Recursively selects Web Mercator tiles overlapping the camera view frustum.
 void collectVisibleTiles(int z, int x, int y, int maxZoom, const QVector3D &camPos,
-                         const QMatrix4x4 &vp, QVector<VisibleTile> &out) {
+                         const FrustumPlanes &frustum, QVector<VisibleTile> &out) {
     const double lon0 = tileToLonRad(z, x);
     const double lon1 = tileToLonRad(z, x + 1);
     const double my0 = tileToMercY(z, y);     // north
@@ -113,41 +153,51 @@ void collectVisibleTiles(int z, int x, int y, int maxZoom, const QVector3D &camP
     const double latC = 0.5 * (latN + latS);
     const double lonC = 0.5 * (lon0 + lon1);
 
-    const QVector3D center(
-        static_cast<float>(std::cos(latC) * std::sin(lonC)),
-        static_cast<float>(std::sin(latC)),
-        static_cast<float>(std::cos(latC) * std::cos(lonC)));
+    const QVector3D center = unitSphereRad(latC, lonC);
+    const QVector3D cNW = unitSphereRad(latN, lon0);
+    const QVector3D cNE = unitSphereRad(latN, lon1);
+    const QVector3D cSW = unitSphereRad(latS, lon0);
+    const QVector3D cSE = unitSphereRad(latS, lon1);
 
-    const double spanRad = std::max(lon1 - lon0, latN - latS);
-    const float boundRadius = static_cast<float>(std::min(1.5, 0.78 * spanRad));
+    // Conservative 3D bounding sphere covering all corners, spherical curvature,
+    // and maximum 3D terrain elevation relief.
+    const float boundRadius = std::max({
+        (cNW - center).length(), (cNE - center).length(),
+        (cSW - center).length(), (cSE - center).length()
+    }) + 0.025f;
 
-    // Horizon / backface culling: sphere point P is visible from camPos if
-    // dot(P, camPos) >= 1.0 (tangent plane). Allow bounding radius margin.
+    // Horizon / backface culling for smaller tiles (keep coarse tiles z <= 2
+    // unconditionally tested against the frustum so wide patches never drop).
     const float camLen = camPos.length();
-    if (z >= 2) {
+    if (z >= 3) {
         const float dotHorizon = QVector3D::dotProduct(center, camPos);
-        if (dotHorizon < 1.0f - boundRadius * camLen - 0.12f)
+        if (dotHorizon < 1.0f - boundRadius * camLen - 0.15f)
             return;
-
-        // Rough NDC frustum cull with generous margin so tiles never pop at edges.
-        const QVector4D clip = vp * QVector4D(center, 1.0f);
-        if (clip.w() > 0.0f) {
-            const float ndcX = clip.x() / clip.w();
-            const float ndcY = clip.y() / clip.w();
-            const float margin = 1.25f + boundRadius * 2.4f / std::max(0.05f, (center - camPos).length());
-            if (std::abs(ndcX) > margin || std::abs(ndcY) > margin)
-                return;
-        }
     }
 
-    const float dist = std::max(0.0008f, (center - camPos).length() - boundRadius * 0.5f);
+    // Exact 6-plane frustum test (safe when tiles straddle the near plane at steep pitch).
+    if (z >= 2 && !sphereIntersectsFrustum(frustum, center, boundRadius))
+        return;
+
+    const double spanRad = std::max(lon1 - lon0, latN - latS);
+    const float dist = std::max(0.0008f, (center - camPos).length() - boundRadius * 0.6f);
     const float angularMetric = static_cast<float>(spanRad) / dist;
 
-    if (z < maxZoom && (z < 2 || angularMetric > 0.34f) && out.size() < 180) {
-        collectVisibleTiles(z + 1, x * 2, y * 2, maxZoom, camPos, vp, out);
-        collectVisibleTiles(z + 1, x * 2 + 1, y * 2, maxZoom, camPos, vp, out);
-        collectVisibleTiles(z + 1, x * 2, y * 2 + 1, maxZoom, camPos, vp, out);
-        collectVisibleTiles(z + 1, x * 2 + 1, y * 2 + 1, maxZoom, camPos, vp, out);
+    if (z < maxZoom && (z < 2 || angularMetric > 0.34f) && out.size() < 280) {
+        // Visit children closest to camera first so foreground tiles never starve
+        // if the tile budget cap is reached.
+        struct Child { int cx, cy; float distSq; };
+        Child children[4] = {
+            {x * 2,     y * 2,     (cNW - camPos).lengthSquared()},
+            {x * 2 + 1, y * 2,     (cNE - camPos).lengthSquared()},
+            {x * 2,     y * 2 + 1, (cSW - camPos).lengthSquared()},
+            {x * 2 + 1, y * 2 + 1, (cSE - camPos).lengthSquared()}
+        };
+        std::sort(children, children + 4, [](const Child &a, const Child &b) {
+            return a.distSq < b.distSq;
+        });
+        for (const auto &ch : children)
+            collectVisibleTiles(z + 1, ch.cx, ch.cy, maxZoom, camPos, frustum, out);
     } else {
         out.append({z, x, y});
     }
@@ -851,11 +901,12 @@ private:
                                      std::clamp(static_cast<int>(std::ceil(std::log2(3.5 / std::max(0.0005, m_snap.camAltitude)))) + 1, 2, 16));
 
         QVector<VisibleTile> tiles;
-        tiles.reserve(96);
-        collectVisibleTiles(1, 0, 0, maxZoom, m_snap.camPos, vp, tiles);
-        collectVisibleTiles(1, 1, 0, maxZoom, m_snap.camPos, vp, tiles);
-        collectVisibleTiles(1, 0, 1, maxZoom, m_snap.camPos, vp, tiles);
-        collectVisibleTiles(1, 1, 1, maxZoom, m_snap.camPos, vp, tiles);
+        tiles.reserve(128);
+        const FrustumPlanes frustum = extractFrustumPlanes(vp);
+        collectVisibleTiles(1, 0, 0, maxZoom, m_snap.camPos, frustum, tiles);
+        collectVisibleTiles(1, 1, 0, maxZoom, m_snap.camPos, frustum, tiles);
+        collectVisibleTiles(1, 0, 1, maxZoom, m_snap.camPos, frustum, tiles);
+        collectVisibleTiles(1, 1, 1, maxZoom, m_snap.camPos, frustum, tiles);
 
         const GLuint singleTex = isSingleImage ? ensureSingleImageTexture(m_snap.baseLayer) : 0;
 
@@ -1293,6 +1344,32 @@ void GlobeView::vec3ToLatLon(const QVector3D &p, double &latDeg, double &lonDeg)
     lonDeg = std::atan2(static_cast<double>(n.x()), static_cast<double>(n.z())) * kRadToDeg;
 }
 
+bool GlobeView::isPointCoveredByVisibleTiles(double targetLatDeg, double targetLonDeg,
+                                             const QVector3D &camPos, const QMatrix4x4 &vp, int maxZoom) {
+    QVector<VisibleTile> tiles;
+    const FrustumPlanes frustum = extractFrustumPlanes(vp);
+    collectVisibleTiles(1, 0, 0, maxZoom, camPos, frustum, tiles);
+    collectVisibleTiles(1, 1, 0, maxZoom, camPos, frustum, tiles);
+    collectVisibleTiles(1, 0, 1, maxZoom, camPos, frustum, tiles);
+    collectVisibleTiles(1, 1, 1, maxZoom, camPos, frustum, tiles);
+
+    const double lonRad = targetLonDeg * kDegToRad;
+    const double latRad = std::clamp(targetLatDeg, -kMaxMercLat, kMaxMercLat) * kDegToRad;
+    const double mercY = std::log(std::tan(M_PI * 0.25 + latRad * 0.5));
+
+    for (const auto &t : tiles) {
+        const double lon0 = tileToLonRad(t.z, t.x);
+        const double lon1 = tileToLonRad(t.z, t.x + 1);
+        const double my0 = tileToMercY(t.z, t.y);     // north (larger)
+        const double my1 = tileToMercY(t.z, t.y + 1); // south (smaller)
+        if (lonRad >= lon0 - 1e-9 && lonRad <= lon1 + 1e-9 &&
+            mercY <= my0 + 1e-9 && mercY >= my1 - 1e-9) {
+            return true;
+        }
+    }
+    return false;
+}
+
 QVector3D GlobeView::cameraWorldPos() const {
     const QVector3D n = latLonToVec3(m_lat, m_lon, 1.0);
     QVector3D worldUp(0.0f, 1.0f, 0.0f);
@@ -1696,11 +1773,12 @@ void GlobeView::requestNeededTilesForCamera() {
                                  std::clamp(static_cast<int>(std::ceil(std::log2(3.5 / std::max(0.0005, m_altitude)))) + 1, 2, 16));
 
     QVector<VisibleTile> tiles;
-    tiles.reserve(96);
-    collectVisibleTiles(1, 0, 0, maxZoom, camPos, vp, tiles);
-    collectVisibleTiles(1, 1, 0, maxZoom, camPos, vp, tiles);
-    collectVisibleTiles(1, 0, 1, maxZoom, camPos, vp, tiles);
-    collectVisibleTiles(1, 1, 1, maxZoom, camPos, vp, tiles);
+    tiles.reserve(128);
+    const FrustumPlanes frustum = extractFrustumPlanes(vp);
+    collectVisibleTiles(1, 0, 0, maxZoom, camPos, frustum, tiles);
+    collectVisibleTiles(1, 1, 0, maxZoom, camPos, frustum, tiles);
+    collectVisibleTiles(1, 0, 1, maxZoom, camPos, frustum, tiles);
+    collectVisibleTiles(1, 1, 1, maxZoom, camPos, frustum, tiles);
 
     for (const auto &t : tiles) {
         if (!isSingleImage)

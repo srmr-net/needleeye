@@ -9,6 +9,7 @@
 #include "cli.h"
 #include "czmlparser.h"
 #include "dbusservice.h"
+#include "globeview.h"
 #include "kmlparser.h"
 #include "spacenav.h"
 #include "theme.h"
@@ -501,6 +502,21 @@ private slots:
         QCOMPARE(b2.spaceNavInvert(), true);
         QCOMPARE(b2.rightDragZoom(), true);
         QVERIFY(std::abs(b2.spaceNavSensitivity() - 1.8) < 0.01);
+    }
+
+    void tiltedCameraNeverDropsForegroundTiles() {
+        // Exact camera pose from screenshot: 41.887 N, 11.598 E, ALT 1316 km, pitched 45 deg.
+        GlobeView view;
+        view.setView(41.887, 11.598, 1316.0 / 6371.0, 45.0, 0.0, true);
+        const QMatrix4x4 vp = view.projectionMatrix(16.0f / 9.0f) * view.viewMatrix();
+        const QVector3D camPos = view.cameraWorldPos();
+
+        // Northern Italy, Rome, Sardinia, and Sicily (south of the 40.98 deg Mercator boundary)
+        // must all be covered by selected tiles with zero dropped foreground patches.
+        QVERIFY(GlobeView::isPointCoveredByVisibleTiles(45.5, 10.0, camPos, vp, 8)); // Alps / N. Italy
+        QVERIFY(GlobeView::isPointCoveredByVisibleTiles(41.9, 12.5, camPos, vp, 8)); // Rome
+        QVERIFY(GlobeView::isPointCoveredByVisibleTiles(40.0, 9.0,  camPos, vp, 8)); // Sardinia
+        QVERIFY(GlobeView::isPointCoveredByVisibleTiles(38.0, 14.0, camPos, vp, 8)); // Sicily
     }
 
     void themeFallsBack() {

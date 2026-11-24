@@ -71,6 +71,9 @@ public:
 
     static QVector3D latLonToVec3(double latDeg, double lonDeg, double radius = 1.0);
     static void vec3ToLatLon(const QVector3D &p, double &latDeg, double &lonDeg);
+    // Exposed for tests: checks whether a lat/lon point is covered by visible tile selection.
+    static bool isPointCoveredByVisibleTiles(double targetLatDeg, double targetLonDeg,
+                                             const QVector3D &camPos, const QMatrix4x4 &vp, int maxZoom);
 
     Q_INVOKABLE void flyTo(double lat, double lon, double altitudeRadii = 0.45);
     Q_INVOKABLE void setView(double lat, double lon, double altitudeRadii,
