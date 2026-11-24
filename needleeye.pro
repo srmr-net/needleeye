@@ -14,6 +14,7 @@ HEADERS += \
     src/globeview.h \
     src/kmlparser.h \
     src/portalfilepicker.h \
+    src/spacenav.h \
     src/theme.h \
     src/tilemanager.h \
     src/translator.h
@@ -27,6 +28,7 @@ SOURCES += \
     src/globeview.cpp \
     src/kmlparser.cpp \
     src/portalfilepicker.cpp \
+    src/spacenav.cpp \
     src/theme.cpp \
     src/tilemanager.cpp \
     src/translator.cpp

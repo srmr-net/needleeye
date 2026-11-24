@@ -117,6 +117,9 @@ Backend::Backend(TileManager *tileManager, FilePicker *filePicker,
         m_ownsFilePicker = true;
     }
 
+    m_spaceNav = new SpaceNavController(this);
+    connect(m_spaceNav, &SpaceNavController::stateChanged, this, &Backend::spaceNavChanged);
+
     connect(m_tileManager, &TileManager::networkError, this, [this](const QString &msg) {
         setError(msg);
     });
@@ -190,6 +193,12 @@ void Backend::loadSettings() {
         m_atmosphereEnabled = root.value(QStringLiteral("atmosphereEnabled")).toBool(true);
     if (root.contains(QStringLiteral("dayNightEnabled")))
         m_dayNightEnabled = root.value(QStringLiteral("dayNightEnabled")).toBool(false);
+    if (root.contains(QStringLiteral("spaceNavSensitivity")))
+        m_spaceNav->setSensitivity(root.value(QStringLiteral("spaceNavSensitivity")).toDouble(1.0));
+    if (root.contains(QStringLiteral("spaceNavInvert")))
+        m_spaceNav->setInvertAxes(root.value(QStringLiteral("spaceNavInvert")).toBool(false));
+    if (root.contains(QStringLiteral("spaceNavEnabled")))
+        m_spaceNav->setEnabled(root.value(QStringLiteral("spaceNavEnabled")).toBool(false));
     if (root.contains(QStringLiteral("autoRefreshEnabled")))
         m_autoRefreshEnabled = root.value(QStringLiteral("autoRefreshEnabled")).toBool(true);
     if (root.contains(QStringLiteral("autoRefreshMinutes")))
@@ -253,6 +262,9 @@ void Backend::saveSettings() const {
     root.insert(QStringLiteral("graticuleEnabled"), m_graticuleEnabled);
     root.insert(QStringLiteral("atmosphereEnabled"), m_atmosphereEnabled);
     root.insert(QStringLiteral("dayNightEnabled"), m_dayNightEnabled);
+    root.insert(QStringLiteral("spaceNavEnabled"), m_spaceNav ? m_spaceNav->enabled() : false);
+    root.insert(QStringLiteral("spaceNavSensitivity"), m_spaceNav ? m_spaceNav->sensitivity() : 1.0);
+    root.insert(QStringLiteral("spaceNavInvert"), m_spaceNav ? m_spaceNav->invertAxes() : false);
     root.insert(QStringLiteral("autoRefreshEnabled"), m_autoRefreshEnabled);
     root.insert(QStringLiteral("autoRefreshMinutes"), m_autoRefreshMinutes);
 
@@ -756,6 +768,50 @@ void Backend::setSidebarVisible(bool visible) {
         return;
     m_sidebarVisible = visible;
     emit hudChanged();
+}
+
+bool Backend::spaceNavEnabled() const {
+    return m_spaceNav && m_spaceNav->enabled();
+}
+
+void Backend::setSpaceNavEnabled(bool enabled) {
+    if (!m_spaceNav || m_spaceNav->enabled() == enabled)
+        return;
+    m_spaceNav->setEnabled(enabled);
+    saveSettings();
+    emit spaceNavChanged();
+}
+
+double Backend::spaceNavSensitivity() const {
+    return m_spaceNav ? m_spaceNav->sensitivity() : 1.0;
+}
+
+void Backend::setSpaceNavSensitivity(double value) {
+    if (!m_spaceNav)
+        return;
+    m_spaceNav->setSensitivity(value);
+    saveSettings();
+    emit spaceNavChanged();
+}
+
+bool Backend::spaceNavInvert() const {
+    return m_spaceNav && m_spaceNav->invertAxes();
+}
+
+void Backend::setSpaceNavInvert(bool invert) {
+    if (!m_spaceNav || m_spaceNav->invertAxes() == invert)
+        return;
+    m_spaceNav->setInvertAxes(invert);
+    saveSettings();
+    emit spaceNavChanged();
+}
+
+bool Backend::spaceNavConnected() const {
+    return m_spaceNav && m_spaceNav->connected();
+}
+
+QString Backend::spaceNavStatus() const {
+    return m_spaceNav ? m_spaceNav->statusText() : QString();
 }
 
 QVector3D Backend::computeSunDirection(const QDateTime &utcTime,

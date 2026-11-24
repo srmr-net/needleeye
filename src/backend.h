@@ -13,6 +13,7 @@
 
 #include "kmlparser.h"
 #include "portalfilepicker.h"
+#include "spacenav.h"
 #include "tilemanager.h"
 
 struct FeedEntry {
@@ -46,6 +47,11 @@ class Backend : public QObject {
     Q_PROPERTY(bool dayNightEnabled READ dayNightEnabled WRITE setDayNightEnabled NOTIFY settingsChanged)
     Q_PROPERTY(bool hudHidden READ hudHidden WRITE setHudHidden NOTIFY hudChanged)
     Q_PROPERTY(bool sidebarVisible READ sidebarVisible WRITE setSidebarVisible NOTIFY hudChanged)
+    Q_PROPERTY(bool spaceNavEnabled READ spaceNavEnabled WRITE setSpaceNavEnabled NOTIFY spaceNavChanged)
+    Q_PROPERTY(double spaceNavSensitivity READ spaceNavSensitivity WRITE setSpaceNavSensitivity NOTIFY spaceNavChanged)
+    Q_PROPERTY(bool spaceNavInvert READ spaceNavInvert WRITE setSpaceNavInvert NOTIFY spaceNavChanged)
+    Q_PROPERTY(bool spaceNavConnected READ spaceNavConnected NOTIFY spaceNavChanged)
+    Q_PROPERTY(QString spaceNavStatus READ spaceNavStatus NOTIFY spaceNavChanged)
     Q_PROPERTY(bool autoRefreshEnabled READ autoRefreshEnabled WRITE setAutoRefreshEnabled NOTIFY settingsChanged)
     Q_PROPERTY(int autoRefreshMinutes READ autoRefreshMinutes WRITE setAutoRefreshMinutes NOTIFY settingsChanged)
     Q_PROPERTY(QString cacheSummary READ cacheSummary NOTIFY cacheStatsChanged)
@@ -77,6 +83,7 @@ public:
                      QObject *parent = nullptr);
 
     TileManager *tileManager() const { return m_tileManager; }
+    SpaceNavController *spaceNav() const { return m_spaceNav; }
 
     int baseLayer() const { return m_activeBaseMapUid; }
     void setBaseLayer(int layerUid);
@@ -105,6 +112,15 @@ public:
 
     bool sidebarVisible() const { return m_sidebarVisible; }
     void setSidebarVisible(bool visible);
+
+    bool spaceNavEnabled() const;
+    void setSpaceNavEnabled(bool enabled);
+    double spaceNavSensitivity() const;
+    void setSpaceNavSensitivity(double value);
+    bool spaceNavInvert() const;
+    void setSpaceNavInvert(bool invert);
+    bool spaceNavConnected() const;
+    QString spaceNavStatus() const;
 
     QVector3D sunDirection() const;
     static QVector3D computeSunDirection(const QDateTime &utcTime,
@@ -195,6 +211,7 @@ public:
 signals:
     void settingsChanged();
     void hudChanged();
+    void spaceNavChanged();
     void baseMapsChanged();
     void baseMapImagePicked(const QString &path);
     void cacheStatsChanged();
@@ -232,6 +249,7 @@ private:
     bool m_ownsTileManager = false;
     FilePicker *m_filePicker = nullptr;
     bool m_ownsFilePicker = false;
+    SpaceNavController *m_spaceNav = nullptr;
     QNetworkAccessManager m_nam;
 
     QString m_settingsPath;

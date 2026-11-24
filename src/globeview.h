@@ -79,6 +79,7 @@ public:
     Q_INVOKABLE void rotateHeadingBy(double dHeadingDeg);
     Q_INVOKABLE void resetNorth();
     Q_INVOKABLE void resetHome();
+    void applySpaceNavMotion(const SpaceNavMotion &motion);
 
 signals:
     void controllerChanged();

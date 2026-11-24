@@ -719,20 +719,28 @@ Item {
                 }
             }
 
-            // TAB 1: DISPLAY, FEEDS & CACHE.
-            ColumnLayout {
+            // TAB 1: DISPLAY, INPUT & CACHE.
+            Flickable {
                 visible: overlay.currentTab === 1
                 Layout.fillWidth: true
                 Layout.fillHeight: true
-                spacing: 14
+                clip: true
+                boundsBehavior: Flickable.StopAtBounds
+                contentWidth: width
+                contentHeight: displayCol.implicitHeight + 12
 
-                Text {
-                    text: qsTr("GLOBE RENDERING")
-                    color: "#80ffffff"
-                    font.pixelSize: 10
-                    font.weight: Font.Bold
-                    font.letterSpacing: 1.4
-                }
+                ColumnLayout {
+                    id: displayCol
+                    width: parent.width
+                    spacing: 14
+
+                    Text {
+                        text: qsTr("GLOBE RENDERING")
+                        color: "#80ffffff"
+                        font.pixelSize: 10
+                        font.weight: Font.Bold
+                        font.letterSpacing: 1.4
+                    }
 
                 // 3D Terrain toggle.
                 RowLayout {
@@ -827,6 +835,102 @@ Item {
                     Switch {
                         checked: backend.dayNightEnabled
                         onToggled: backend.dayNightEnabled = checked
+                    }
+                }
+
+                Rectangle { Layout.fillWidth: true; Layout.preferredHeight: 1; color: "#22ffffff" }
+
+                Text {
+                    text: qsTr("3D SPACEMOUSE (SPACENAVD)")
+                    color: "#80ffffff"
+                    font.pixelSize: 10
+                    font.weight: Font.Bold
+                    font.letterSpacing: 1.4
+                }
+
+                RowLayout {
+                    Layout.fillWidth: true
+                    spacing: 10
+
+                    ColumnLayout {
+                        Layout.fillWidth: true
+                        spacing: 3
+                        Text { text: qsTr("Enable 3D SpaceMouse"); color: theme.foreground; font.pixelSize: 13 }
+                        RowLayout {
+                            spacing: 6
+                            Rectangle {
+                                Layout.preferredWidth: 8
+                                Layout.preferredHeight: 8
+                                radius: 4
+                                color: !backend.spaceNavEnabled
+                                    ? "#44ffffff"
+                                    : (backend.spaceNavConnected ? "#4ade80" : theme.accent)
+                            }
+                            Text {
+                                text: backend.spaceNavStatus
+                                color: backend.spaceNavConnected ? "#86efac" : "#88ffffff"
+                                font.family: "monospace"
+                                font.pixelSize: 11
+                            }
+                        }
+                    }
+
+                    Switch {
+                        checked: backend.spaceNavEnabled
+                        onToggled: backend.spaceNavEnabled = checked
+                    }
+                }
+
+                RowLayout {
+                    Layout.fillWidth: true
+                    enabled: backend.spaceNavEnabled
+                    opacity: backend.spaceNavEnabled ? 1.0 : 0.45
+                    spacing: 12
+
+                    Text {
+                        text: qsTr("SpaceMouse Sensitivity")
+                        color: theme.foreground
+                        font.pixelSize: 12
+                        Layout.preferredWidth: 160
+                    }
+
+                    Slider {
+                        Layout.fillWidth: true
+                        from: 0.2
+                        to: 3.0
+                        stepSize: 0.1
+                        value: backend.spaceNavSensitivity
+                        onMoved: backend.spaceNavSensitivity = value
+                    }
+
+                    Text {
+                        font.family: "monospace"
+                        font.pixelSize: 12
+                        color: theme.accent
+                        Layout.preferredWidth: 42
+                        horizontalAlignment: Text.AlignRight
+                        text: {
+                            var _l = translator.language
+                            return backend.spaceNavSensitivity.toLocaleString(Qt.locale(), 'f', 1) + "×"
+                        }
+                    }
+                }
+
+                RowLayout {
+                    Layout.fillWidth: true
+                    enabled: backend.spaceNavEnabled
+                    opacity: backend.spaceNavEnabled ? 1.0 : 0.45
+
+                    ColumnLayout {
+                        Layout.fillWidth: true
+                        spacing: 2
+                        Text { text: qsTr("Invert Axes (Object Mode)"); color: theme.foreground; font.pixelSize: 13 }
+                        Text { text: qsTr("Switch between flying the camera and grabbing the globe; buttons 1/2 reset north & home"); color: "#80ffffff"; font.pixelSize: 11; wrapMode: Text.Wrap; Layout.fillWidth: true }
+                    }
+
+                    Switch {
+                        checked: backend.spaceNavInvert
+                        onToggled: backend.spaceNavInvert = checked
                     }
                 }
 
@@ -934,8 +1038,7 @@ Item {
                         }
                     }
                 }
-
-                Item { Layout.fillHeight: true }
+                }
             }
         }
     }

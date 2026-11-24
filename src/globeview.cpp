@@ -1235,6 +1235,17 @@ void GlobeView::setController(Backend *backend) {
                 update();
             });
         }
+        if (auto *sn = m_backend->spaceNav()) {
+            connect(sn, &SpaceNavController::motionReceived, this, &GlobeView::applySpaceNavMotion);
+            connect(sn, &SpaceNavController::buttonPressed, this, [this](int bnum) {
+                if (!isEnabled())
+                    return;
+                if (bnum == 0)
+                    resetNorth();
+                else if (bnum == 1)
+                    resetHome();
+            });
+        }
         requestNeededTilesForCamera();
     }
     emit controllerChanged();
@@ -1422,6 +1433,40 @@ void GlobeView::resetHome() {
     m_targetHeading = 0.0;
     if (!m_animTimer.isActive())
         m_animTimer.start();
+}
+
+void GlobeView::applySpaceNavMotion(const SpaceNavMotion &motion) {
+    // Pause 3D mouse navigation while a modal overlay (Settings / Search / Help) is open.
+    if (!isEnabled() || !m_backend || !m_backend->spaceNav())
+        return;
+
+    const GlobeMotionDelta d = SpaceNavController::mapMotionToGlobe(
+        motion,
+        m_backend->spaceNavSensitivity(),
+        m_backend->spaceNavInvert(),
+        m_altitude,
+        m_lat,
+        m_heading);
+
+    if (std::abs(d.dLatDeg) < 1e-6 && std::abs(d.dLonDeg) < 1e-6 &&
+        std::abs(d.zoomFactor - 1.0) < 1e-5 &&
+        std::abs(d.dPitchDeg) < 1e-5 && std::abs(d.dHeadingDeg) < 1e-5) {
+        return;
+    }
+
+    m_flying = false;
+    m_velLat = 0.0;
+    m_velLon = 0.0;
+    m_lat = std::clamp(m_lat + d.dLatDeg, -84.0, 84.0);
+    m_lon = wrapLon(m_lon + d.dLonDeg);
+    m_altitude = std::clamp(m_altitude * d.zoomFactor, 0.0008, 3.2);
+    m_pitch = std::clamp(m_pitch + d.dPitchDeg, 0.0, 62.0);
+    m_heading = wrapLon(m_heading + d.dHeadingDeg);
+
+    requestNeededTilesForCamera();
+    updateSelectedMarkerProjection();
+    emit cameraChanged();
+    update();
 }
 
 void GlobeView::tickAnimation() {

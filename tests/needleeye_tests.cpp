@@ -10,6 +10,7 @@
 #include "czmlparser.h"
 #include "dbusservice.h"
 #include "kmlparser.h"
+#include "spacenav.h"
 #include "theme.h"
 #include "tilemanager.h"
 #include "translator.h"
@@ -452,6 +453,52 @@ private slots:
         const QJsonObject skillRes = parseObj(Cli::installSkillJson(skillOutDir, QStringLiteral("# Needleeye Skill\n")));
         QVERIFY(skillRes.value(QStringLiteral("ok")).toBool());
         QVERIFY(QFileInfo::exists(skillOutDir + QStringLiteral("/SKILL.md")));
+    }
+
+    void spaceNavShapesDeadzoneMaps6DofAndPersistsSettings() {
+        // Deadzone filters small jitter; curve stays monotonic and symmetric.
+        QCOMPARE(SpaceNavController::shapedAxis(0), 0.0);
+        QCOMPARE(SpaceNavController::shapedAxis(10), 0.0);
+        QCOMPARE(SpaceNavController::shapedAxis(-12), 0.0);
+        QVERIFY(SpaceNavController::shapedAxis(180) > 0.0);
+        QVERIFY(SpaceNavController::shapedAxis(350) > SpaceNavController::shapedAxis(180));
+        QVERIFY(std::abs(SpaceNavController::shapedAxis(-200) + SpaceNavController::shapedAxis(200)) < 1e-6);
+
+        // Pushing puck forward (-z) moves North when heading is 0; pulling up (+y) zooms out (>1).
+        const SpaceNavMotion fwd{0, 200, -250, 150, -150, 0};
+        const GlobeMotionDelta dNormal = SpaceNavController::mapMotionToGlobe(fwd, 1.0, false, 0.5, 0.0, 0.0);
+        QVERIFY(dNormal.dLatDeg > 0.0);
+        QVERIFY(std::abs(dNormal.dLonDeg) < 1e-6);
+        QVERIFY(dNormal.zoomFactor > 1.0);
+        QVERIFY(dNormal.dPitchDeg > 0.0);
+        QVERIFY(dNormal.dHeadingDeg > 0.0);
+
+        // With heading=90 deg (facing East), pushing forward (-z) moves East (+dLon).
+        const GlobeMotionDelta dEast = SpaceNavController::mapMotionToGlobe({0, 0, -250, 0, 0, 0}, 1.0, false, 0.5, 0.0, 90.0);
+        QVERIFY(std::abs(dEast.dLatDeg) < 1e-6);
+        QVERIFY(dEast.dLonDeg > 0.0);
+
+        // Invert mode flips directions cleanly.
+        const GlobeMotionDelta dInv = SpaceNavController::mapMotionToGlobe(fwd, 1.0, true, 0.5, 0.0, 0.0);
+        QVERIFY(dInv.dLatDeg < 0.0);
+        QVERIFY(dInv.zoomFactor < 1.0);
+        QVERIFY(dInv.dPitchDeg < 0.0);
+
+        // Verify persistence in settings.json.
+        QTemporaryDir dir;
+        const QString settingsFile = dir.filePath(QStringLiteral("settings.json"));
+        TileManager tm(dir.filePath(QStringLiteral("tiles")));
+        FakeFilePicker picker;
+        Backend b1(&tm, &picker, false, settingsFile);
+        QCOMPARE(b1.spaceNavEnabled(), false);
+        b1.setSpaceNavSensitivity(1.8);
+        b1.setSpaceNavInvert(true);
+        b1.setSpaceNavEnabled(true);
+
+        Backend b2(&tm, &picker, false, settingsFile);
+        QCOMPARE(b2.spaceNavEnabled(), true);
+        QCOMPARE(b2.spaceNavInvert(), true);
+        QVERIFY(std::abs(b2.spaceNavSensitivity() - 1.8) < 0.01);
     }
 
     void themeFallsBack() {

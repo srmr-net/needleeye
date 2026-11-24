@@ -67,6 +67,8 @@ QString DbusService::GetState() {
     out.insert(QStringLiteral("dayNight"), m_backend->dayNightEnabled());
     out.insert(QStringLiteral("hudHidden"), m_backend->hudHidden());
     out.insert(QStringLiteral("sidebarVisible"), m_backend->sidebarVisible());
+    out.insert(QStringLiteral("spaceNavEnabled"), m_backend->spaceNavEnabled());
+    out.insert(QStringLiteral("spaceNavConnected"), m_backend->spaceNavConnected());
     out.insert(QStringLiteral("visibleFeatures"), m_backend->visiblePlacemarks());
     out.insert(QStringLiteral("totalFeatures"), m_backend->totalPlacemarks());
     out.insert(QStringLiteral("loadingCount"), m_backend->loadingCount());
