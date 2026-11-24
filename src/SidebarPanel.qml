@@ -203,7 +203,7 @@ Rectangle {
                 Layout.preferredWidth: refreshBtnTxt.implicitWidth + 12
                 radius: Math.min(4, theme.radius)
                 color: "#1affffff"
-                Text { id: refreshBtnTxt; anchors.centerIn: parent; text: qsTr("Sync (R)"); color: theme.accent; font.pixelSize: 10 }
+                Text { id: refreshBtnTxt; anchors.centerIn: parent; text: qsTr("Sync (F5)"); color: theme.accent; font.pixelSize: 10 }
                 MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor; onClicked: backend.refreshAllFeeds() }
             }
         }

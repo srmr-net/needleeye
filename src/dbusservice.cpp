@@ -120,7 +120,7 @@ QString DbusService::SetView(double lat, double lon, double altKm, double pitch,
 QString DbusService::ResetNorth() {
     if (!m_globe)
         return errorJson(QStringLiteral("Globe viewport unavailable."));
-    m_globe->resetNorth();
+    m_globe->resetNorthAndTilt();
     return okJson();
 }
 

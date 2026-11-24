@@ -841,6 +841,30 @@ Item {
                 Rectangle { Layout.fillWidth: true; Layout.preferredHeight: 1; color: "#22ffffff" }
 
                 Text {
+                    text: qsTr("NAVIGATION")
+                    color: "#80ffffff"
+                    font.pixelSize: 10
+                    font.weight: Font.Bold
+                    font.letterSpacing: 1.4
+                }
+
+                RowLayout {
+                    Layout.fillWidth: true
+                    ColumnLayout {
+                        Layout.fillWidth: true
+                        spacing: 2
+                        Text { text: qsTr("Right-Drag Zoom"); color: theme.foreground; font.pixelSize: 13 }
+                        Text { text: qsTr("Off: right-drag tilts & rotates · On: right-drag zooms up/down (middle-drag & Shift+drag tilt)"); color: "#80ffffff"; font.pixelSize: 11; wrapMode: Text.Wrap; Layout.fillWidth: true }
+                    }
+                    Switch {
+                        checked: backend.rightDragZoom
+                        onToggled: backend.rightDragZoom = checked
+                    }
+                }
+
+                Rectangle { Layout.fillWidth: true; Layout.preferredHeight: 1; color: "#22ffffff" }
+
+                Text {
                     text: qsTr("3D SPACEMOUSE (SPACENAVD)")
                     color: "#80ffffff"
                     font.pixelSize: 10

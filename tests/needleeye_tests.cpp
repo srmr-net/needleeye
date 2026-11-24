@@ -494,10 +494,12 @@ private slots:
         b1.setSpaceNavSensitivity(1.8);
         b1.setSpaceNavInvert(true);
         b1.setSpaceNavEnabled(true);
+        b1.setRightDragZoom(true);
 
         Backend b2(&tm, &picker, false, settingsFile);
         QCOMPARE(b2.spaceNavEnabled(), true);
         QCOMPARE(b2.spaceNavInvert(), true);
+        QCOMPARE(b2.rightDragZoom(), true);
         QVERIFY(std::abs(b2.spaceNavSensitivity() - 1.8) < 0.01);
     }
 

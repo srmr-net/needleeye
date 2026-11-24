@@ -193,6 +193,8 @@ void Backend::loadSettings() {
         m_atmosphereEnabled = root.value(QStringLiteral("atmosphereEnabled")).toBool(true);
     if (root.contains(QStringLiteral("dayNightEnabled")))
         m_dayNightEnabled = root.value(QStringLiteral("dayNightEnabled")).toBool(false);
+    if (root.contains(QStringLiteral("rightDragZoom")))
+        m_rightDragZoom = root.value(QStringLiteral("rightDragZoom")).toBool(false);
     if (root.contains(QStringLiteral("spaceNavSensitivity")))
         m_spaceNav->setSensitivity(root.value(QStringLiteral("spaceNavSensitivity")).toDouble(1.0));
     if (root.contains(QStringLiteral("spaceNavInvert")))
@@ -262,6 +264,7 @@ void Backend::saveSettings() const {
     root.insert(QStringLiteral("graticuleEnabled"), m_graticuleEnabled);
     root.insert(QStringLiteral("atmosphereEnabled"), m_atmosphereEnabled);
     root.insert(QStringLiteral("dayNightEnabled"), m_dayNightEnabled);
+    root.insert(QStringLiteral("rightDragZoom"), m_rightDragZoom);
     root.insert(QStringLiteral("spaceNavEnabled"), m_spaceNav ? m_spaceNav->enabled() : false);
     root.insert(QStringLiteral("spaceNavSensitivity"), m_spaceNav ? m_spaceNav->sensitivity() : 1.0);
     root.insert(QStringLiteral("spaceNavInvert"), m_spaceNav ? m_spaceNav->invertAxes() : false);
@@ -752,6 +755,14 @@ void Backend::setDayNightEnabled(bool enabled) {
     if (m_dayNightEnabled == enabled)
         return;
     m_dayNightEnabled = enabled;
+    saveSettings();
+    emit settingsChanged();
+}
+
+void Backend::setRightDragZoom(bool enabled) {
+    if (m_rightDragZoom == enabled)
+        return;
+    m_rightDragZoom = enabled;
     saveSettings();
     emit settingsChanged();
 }

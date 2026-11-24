@@ -20,6 +20,7 @@ class GlobeView : public QQuickFramebufferObject {
     Q_PROPERTY(double cameraAltitudeKm READ cameraAltitudeKm NOTIFY cameraChanged)
     Q_PROPERTY(double cameraPitch READ cameraPitch NOTIFY cameraChanged)
     Q_PROPERTY(double cameraHeading READ cameraHeading NOTIFY cameraChanged)
+    Q_PROPERTY(bool moving READ isMoving NOTIFY cameraChanged)
 
     Q_PROPERTY(bool cursorOnGlobe READ cursorOnGlobe NOTIFY cursorChanged)
     Q_PROPERTY(double cursorLat READ cursorLat NOTIFY cursorChanged)
@@ -50,6 +51,7 @@ public:
     double cameraAltitudeRadii() const { return m_altitude; }
     double cameraPitch() const { return m_pitch; }
     double cameraHeading() const { return m_heading; }
+    bool isMoving() const { return m_flying || std::abs(m_velLat) > 0.002 || std::abs(m_velLon) > 0.002; }
 
     bool cursorOnGlobe() const { return m_cursorOnGlobe; }
     double cursorLat() const { return m_cursorLat; }
@@ -78,6 +80,10 @@ public:
     Q_INVOKABLE void tiltBy(double dPitchDeg);
     Q_INVOKABLE void rotateHeadingBy(double dHeadingDeg);
     Q_INVOKABLE void resetNorth();
+    Q_INVOKABLE void resetTilt();
+    Q_INVOKABLE void resetNorthAndTilt();
+    Q_INVOKABLE void toggleTilt3D();
+    Q_INVOKABLE void stopMotion();
     Q_INVOKABLE void resetHome();
     void applySpaceNavMotion(const SpaceNavMotion &motion);
 
@@ -128,6 +134,7 @@ private:
 
     bool m_dragging = false;
     bool m_tilting = false;
+    bool m_rightZooming = false;
     bool m_dragMoved = false;
     QPointF m_pressPos;
     QPointF m_lastPos;

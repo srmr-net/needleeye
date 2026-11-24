@@ -45,6 +45,7 @@ class Backend : public QObject {
     Q_PROPERTY(bool graticuleEnabled READ graticuleEnabled WRITE setGraticuleEnabled NOTIFY settingsChanged)
     Q_PROPERTY(bool atmosphereEnabled READ atmosphereEnabled WRITE setAtmosphereEnabled NOTIFY settingsChanged)
     Q_PROPERTY(bool dayNightEnabled READ dayNightEnabled WRITE setDayNightEnabled NOTIFY settingsChanged)
+    Q_PROPERTY(bool rightDragZoom READ rightDragZoom WRITE setRightDragZoom NOTIFY settingsChanged)
     Q_PROPERTY(bool hudHidden READ hudHidden WRITE setHudHidden NOTIFY hudChanged)
     Q_PROPERTY(bool sidebarVisible READ sidebarVisible WRITE setSidebarVisible NOTIFY hudChanged)
     Q_PROPERTY(bool spaceNavEnabled READ spaceNavEnabled WRITE setSpaceNavEnabled NOTIFY spaceNavChanged)
@@ -106,6 +107,9 @@ public:
 
     bool dayNightEnabled() const { return m_dayNightEnabled; }
     void setDayNightEnabled(bool enabled);
+
+    bool rightDragZoom() const { return m_rightDragZoom; }
+    void setRightDragZoom(bool enabled);
 
     bool hudHidden() const { return m_hudHidden; }
     void setHudHidden(bool hidden);
@@ -262,6 +266,7 @@ private:
     bool m_graticuleEnabled = true;
     bool m_atmosphereEnabled = true;
     bool m_dayNightEnabled = false;
+    bool m_rightDragZoom = false;
     bool m_hudHidden = false;
     bool m_sidebarVisible = true;
     bool m_autoRefreshEnabled = true;

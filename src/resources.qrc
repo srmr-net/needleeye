@@ -3,6 +3,7 @@
         <file alias="Main.qml">Main.qml</file>
         <file alias="SidebarPanel.qml">SidebarPanel.qml</file>
         <file alias="InspectorPanel.qml">InspectorPanel.qml</file>
+        <file alias="NavControls.qml">NavControls.qml</file>
         <file alias="SearchOverlay.qml">SearchOverlay.qml</file>
         <file alias="SettingsOverlay.qml">SettingsOverlay.qml</file>
         <file alias="TimelineBar.qml">TimelineBar.qml</file>

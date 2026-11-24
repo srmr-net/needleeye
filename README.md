@@ -34,16 +34,16 @@ See [docs/automation.md](docs/automation.md) for the complete D-Bus interface (`
 | `/` | Jump to loaded KML feature, city, or place (Photon geocode) |
 | `L` | Toggle feeds & layers sidebar |
 | `H` | Hide or restore all HUD panels (globe-only mode) |
-| `O` | Open local `.kml` / `.kmz` file |
-| `R` | Refresh active KML feeds |
-| `Space` | Play / pause timeline (or refresh feeds) |
+| `O` | Open local `.kml` / `.kmz` / `.czml` file |
+| `F5` / `Ctrl+R` | Refresh active KML/CZML feeds |
+| `Space` | Stop camera motion, or play / pause timeline |
 | `[` / `]` | Step timeline backward / forward |
 | `1` – `9` | Switch enabled base maps |
 | `,` / `Ctrl+,` | Open settings & base map manager |
 | `T` / `G` / `D` | Toggle 3D terrain elevation / graticule grid / day-night shading |
-| `Arrows` | Pan globe (`Shift + Arrows` to tilt horizon & rotate heading) |
-| `+` / `-` | Zoom in / out |
-| `N` / `0` | Reset north / home orbital view |
-| `Right-drag` | Tilt horizon & rotate heading |
+| `Arrows` | Pan globe (`Alt`: fine · `Shift+Up/Down`: tilt · `Shift+Left/Right`: rotate) |
+| `+` / `-` / `PgUp` / `PgDn` | Zoom in / out (or scroll wheel; left/right double-click zooms in/out) |
+| `N` / `U` / `R` / `0` | Reset north / top-down tilt / both / home orbital view |
+| `Middle` / `Shift+Drag` | Tilt horizon & rotate heading (Right-drag: tilt/rotate by default, or Classic Desktop style zoom in Settings) |
 | `?` | Show or hide shortcut overlay |
 | `Q` | Quit |

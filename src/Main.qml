@@ -80,8 +80,19 @@ ApplicationWindow {
     }
     Shortcut { sequence: "H"; context: Qt.ApplicationShortcut; enabled: win.globeShortcutsEnabled; onActivated: win.toggleHud() }
     Shortcut { sequence: "O"; context: Qt.ApplicationShortcut; enabled: win.globeShortcutsEnabled; onActivated: backend.openLocalFileDialog() }
-    Shortcut { sequence: "R"; context: Qt.ApplicationShortcut; enabled: win.globeShortcutsEnabled; onActivated: backend.refreshAllFeeds() }
-    Shortcut { sequence: "Space"; context: Qt.ApplicationShortcut; enabled: win.globeShortcutsEnabled; onActivated: backend.primaryAction() }
+    Shortcut { sequence: "Ctrl+R"; context: Qt.ApplicationShortcut; enabled: win.globeShortcutsEnabled; onActivated: backend.refreshAllFeeds() }
+    Shortcut { sequence: "F5"; context: Qt.ApplicationShortcut; enabled: win.globeShortcutsEnabled; onActivated: backend.refreshAllFeeds() }
+    Shortcut {
+        sequence: "Space"
+        context: Qt.ApplicationShortcut
+        enabled: win.globeShortcutsEnabled
+        onActivated: {
+            if (globe.moving)
+                globe.stopMotion()
+            else
+                backend.primaryAction()
+        }
+    }
     Shortcut { sequence: "["; context: Qt.ApplicationShortcut; enabled: win.globeShortcutsEnabled; onActivated: backend.stepTimeline(-0.04) }
     Shortcut { sequence: "]"; context: Qt.ApplicationShortcut; enabled: win.globeShortcutsEnabled; onActivated: backend.stepTimeline(0.04) }
     Shortcut { sequence: "1"; context: Qt.ApplicationShortcut; enabled: win.globeShortcutsEnabled; onActivated: backend.selectBaseMapBySlot(0) }
@@ -96,19 +107,34 @@ ApplicationWindow {
     Shortcut { sequence: "T"; context: Qt.ApplicationShortcut; enabled: win.globeShortcutsEnabled; onActivated: backend.terrainEnabled = !backend.terrainEnabled }
     Shortcut { sequence: "G"; context: Qt.ApplicationShortcut; enabled: win.globeShortcutsEnabled; onActivated: backend.graticuleEnabled = !backend.graticuleEnabled }
     Shortcut { sequence: "D"; context: Qt.ApplicationShortcut; enabled: win.globeShortcutsEnabled; onActivated: backend.dayNightEnabled = !backend.dayNightEnabled }
+    // Google Earth view reset shortcuts: N = North only, U = Top-down tilt only, R = North + Tilt, 0 = Home orbit.
     Shortcut { sequence: "N"; context: Qt.ApplicationShortcut; enabled: win.globeShortcutsEnabled; onActivated: globe.resetNorth() }
+    Shortcut { sequence: "U"; context: Qt.ApplicationShortcut; enabled: win.globeShortcutsEnabled; onActivated: globe.resetTilt() }
+    Shortcut { sequence: "R"; context: Qt.ApplicationShortcut; enabled: win.globeShortcutsEnabled; onActivated: globe.resetNorthAndTilt() }
     Shortcut { sequence: "0"; context: Qt.ApplicationShortcut; enabled: win.globeShortcutsEnabled; onActivated: globe.resetHome() }
     Shortcut { sequence: "+"; context: Qt.ApplicationShortcut; enabled: win.globeShortcutsEnabled; onActivated: globe.zoomBy(0.74) }
     Shortcut { sequence: "="; context: Qt.ApplicationShortcut; enabled: win.globeShortcutsEnabled; onActivated: globe.zoomBy(0.74) }
+    Shortcut { sequence: "PgUp"; context: Qt.ApplicationShortcut; enabled: win.globeShortcutsEnabled; onActivated: globe.zoomBy(0.74) }
     Shortcut { sequence: "-"; context: Qt.ApplicationShortcut; enabled: win.globeShortcutsEnabled; onActivated: globe.zoomBy(1.35) }
+    Shortcut { sequence: "PgDown"; context: Qt.ApplicationShortcut; enabled: win.globeShortcutsEnabled; onActivated: globe.zoomBy(1.35) }
     Shortcut { sequence: "Up"; context: Qt.ApplicationShortcut; enabled: win.globeShortcutsEnabled; onActivated: globe.panBy(12, 0) }
     Shortcut { sequence: "Down"; context: Qt.ApplicationShortcut; enabled: win.globeShortcutsEnabled; onActivated: globe.panBy(-12, 0) }
     Shortcut { sequence: "Left"; context: Qt.ApplicationShortcut; enabled: win.globeShortcutsEnabled; onActivated: globe.panBy(0, -16) }
     Shortcut { sequence: "Right"; context: Qt.ApplicationShortcut; enabled: win.globeShortcutsEnabled; onActivated: globe.panBy(0, 16) }
-    Shortcut { sequence: "Shift+Up"; context: Qt.ApplicationShortcut; enabled: win.globeShortcutsEnabled; onActivated: globe.tiltBy(8) }
-    Shortcut { sequence: "Shift+Down"; context: Qt.ApplicationShortcut; enabled: win.globeShortcutsEnabled; onActivated: globe.tiltBy(-8) }
+    // Fine/slow movement with Alt (Google Earth convention).
+    Shortcut { sequence: "Alt+Up"; context: Qt.ApplicationShortcut; enabled: win.globeShortcutsEnabled; onActivated: globe.panBy(3, 0) }
+    Shortcut { sequence: "Alt+Down"; context: Qt.ApplicationShortcut; enabled: win.globeShortcutsEnabled; onActivated: globe.panBy(-3, 0) }
+    Shortcut { sequence: "Alt+Left"; context: Qt.ApplicationShortcut; enabled: win.globeShortcutsEnabled; onActivated: globe.panBy(0, -4) }
+    Shortcut { sequence: "Alt+Right"; context: Qt.ApplicationShortcut; enabled: win.globeShortcutsEnabled; onActivated: globe.panBy(0, 4) }
+    // Google Earth tilt direction: Shift+Down tilts toward horizon, Shift+Up tilts toward top-down.
+    Shortcut { sequence: "Shift+Down"; context: Qt.ApplicationShortcut; enabled: win.globeShortcutsEnabled; onActivated: globe.tiltBy(8) }
+    Shortcut { sequence: "Shift+Up"; context: Qt.ApplicationShortcut; enabled: win.globeShortcutsEnabled; onActivated: globe.tiltBy(-8) }
     Shortcut { sequence: "Shift+Left"; context: Qt.ApplicationShortcut; enabled: win.globeShortcutsEnabled; onActivated: globe.rotateHeadingBy(-15) }
     Shortcut { sequence: "Shift+Right"; context: Qt.ApplicationShortcut; enabled: win.globeShortcutsEnabled; onActivated: globe.rotateHeadingBy(15) }
+    Shortcut { sequence: "Alt+Shift+Down"; context: Qt.ApplicationShortcut; enabled: win.globeShortcutsEnabled; onActivated: globe.tiltBy(2) }
+    Shortcut { sequence: "Alt+Shift+Up"; context: Qt.ApplicationShortcut; enabled: win.globeShortcutsEnabled; onActivated: globe.tiltBy(-2) }
+    Shortcut { sequence: "Alt+Shift+Left"; context: Qt.ApplicationShortcut; enabled: win.globeShortcutsEnabled; onActivated: globe.rotateHeadingBy(-4) }
+    Shortcut { sequence: "Alt+Shift+Right"; context: Qt.ApplicationShortcut; enabled: win.globeShortcutsEnabled; onActivated: globe.rotateHeadingBy(4) }
     Shortcut {
         sequence: "Escape"
         context: Qt.ApplicationShortcut
@@ -537,6 +563,26 @@ ApplicationWindow {
             anchors.margins: 12
             height: 46
             z: 10
+        }
+
+        // Compact Omarchy on-screen navigation controls (compass, 3D/2D tilt, zoom, home).
+        NavControls {
+            id: navControls
+            visible: !backend.hudHidden
+            anchors.right: inspectorPanel.visible ? inspectorPanel.left : parent.right
+            anchors.rightMargin: 14
+            anchors.bottom: timelineBar.visible ? timelineBar.top : parent.bottom
+            anchors.bottomMargin: timelineBar.visible ? 12 : 28
+            z: 10
+            heading: globe.cameraHeading
+            pitch: globe.cameraPitch
+            onZoomInStep: globe.zoomBy(0.84)
+            onZoomOutStep: globe.zoomBy(1.19)
+            onRotateDelta: function(deg) { globe.rotateHeadingBy(deg) }
+            onResetNorthClicked: globe.resetNorth()
+            onResetNorthAndTiltClicked: globe.resetNorthAndTilt()
+            onToggle3DClicked: globe.toggleTilt3D()
+            onResetHomeClicked: globe.resetHome()
         }
 
         // Subtle base map attribution watermark.

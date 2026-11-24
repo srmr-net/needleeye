@@ -1418,10 +1418,51 @@ void GlobeView::resetNorth() {
     m_targetLat = m_lat;
     m_targetLon = m_lon;
     m_targetAlt = m_altitude;
+    m_targetPitch = m_pitch;
+    m_targetHeading = 0.0;
+    if (!m_animTimer.isActive())
+        m_animTimer.start();
+}
+
+void GlobeView::resetTilt() {
+    m_flying = true;
+    m_targetLat = m_lat;
+    m_targetLon = m_lon;
+    m_targetAlt = m_altitude;
+    m_targetPitch = 0.0;
+    m_targetHeading = m_heading;
+    if (!m_animTimer.isActive())
+        m_animTimer.start();
+}
+
+void GlobeView::resetNorthAndTilt() {
+    m_flying = true;
+    m_targetLat = m_lat;
+    m_targetLon = m_lon;
+    m_targetAlt = m_altitude;
     m_targetPitch = 0.0;
     m_targetHeading = 0.0;
     if (!m_animTimer.isActive())
         m_animTimer.start();
+}
+
+void GlobeView::toggleTilt3D() {
+    m_flying = true;
+    m_targetLat = m_lat;
+    m_targetLon = m_lon;
+    m_targetAlt = m_altitude;
+    m_targetPitch = (m_pitch < 10.0) ? 45.0 : 0.0;
+    m_targetHeading = m_heading;
+    if (!m_animTimer.isActive())
+        m_animTimer.start();
+}
+
+void GlobeView::stopMotion() {
+    m_flying = false;
+    m_velLat = 0.0;
+    m_velLon = 0.0;
+    m_animTimer.stop();
+    emit cameraChanged();
 }
 
 void GlobeView::resetHome() {
@@ -1680,9 +1721,13 @@ void GlobeView::mousePressEvent(QMouseEvent *event) {
     m_pressPos = event->position();
     m_lastPos = m_pressPos;
     m_dragMoved = false;
-    m_tilting = (event->button() == Qt::RightButton ||
-                 event->button() == Qt::MiddleButton ||
-                 (event->modifiers() & Qt::ShiftModifier));
+
+    const bool proRightZoom = (m_backend && m_backend->rightDragZoom());
+    m_rightZooming = (event->button() == Qt::RightButton && proRightZoom);
+    m_tilting = (!m_rightZooming &&
+                 (event->button() == Qt::RightButton ||
+                  event->button() == Qt::MiddleButton ||
+                  (event->modifiers() & Qt::ShiftModifier)));
     m_dragging = true;
     event->accept();
 }
@@ -1696,7 +1741,11 @@ void GlobeView::mouseMoveEvent(QMouseEvent *event) {
         m_dragMoved = true;
 
     if (m_dragging) {
-        if (m_tilting) {
+        if (m_rightZooming) {
+            // Classic Desktop style: right-drag up zooms out, down zooms in.
+            const double factor = std::exp(-delta.y() * 0.008);
+            m_altitude = std::clamp(m_altitude * factor, 0.0008, 3.2);
+        } else if (m_tilting) {
             m_heading = wrapLon(m_heading + delta.x() * 0.25);
             m_pitch = std::clamp(m_pitch - delta.y() * 0.25, 0.0, 62.0);
         } else {
@@ -1729,12 +1778,13 @@ void GlobeView::mouseReleaseEvent(QMouseEvent *event) {
             m_backend->selectPlacemark(picked, false);
         else
             m_backend->clearSelection();
-    } else if (m_dragging && !m_tilting && (std::abs(m_velLat) > 0.01 || std::abs(m_velLon) > 0.01)) {
+    } else if (m_dragging && !m_tilting && !m_rightZooming && (std::abs(m_velLat) > 0.01 || std::abs(m_velLon) > 0.01)) {
         if (!m_animTimer.isActive())
             m_animTimer.start();
     }
     m_dragging = false;
     m_tilting = false;
+    m_rightZooming = false;
     event->accept();
 }
 
@@ -1765,7 +1815,14 @@ void GlobeView::wheelEvent(QWheelEvent *event) {
 
 void GlobeView::mouseDoubleClickEvent(QMouseEvent *event) {
     double lat = 0.0, lon = 0.0;
-    if (screenToGlobe(event->position(), lat, lon))
+    if (event->button() == Qt::RightButton) {
+        // Google Earth convention: right double-click zooms out.
+        if (screenToGlobe(event->position(), lat, lon))
+            flyTo(lat, lon, std::min(3.2, m_altitude * 2.4));
+        else
+            flyTo(m_lat, m_lon, std::min(3.2, m_altitude * 2.4));
+    } else if (event->button() == Qt::LeftButton && screenToGlobe(event->position(), lat, lon)) {
         flyTo(lat, lon, std::max(0.003, m_altitude * 0.35));
+    }
     event->accept();
 }
