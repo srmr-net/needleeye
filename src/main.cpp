@@ -16,6 +16,7 @@
 #include "cli.h"
 #include "dbusservice.h"
 #include "globeview.h"
+#include "idleinhibitor.h"
 #include "theme.h"
 #include "translator.h"
 
@@ -93,6 +94,16 @@ int main(int argc, char *argv[]) {
 
     auto *rootWindow = qobject_cast<QQuickWindow *>(engine.rootObjects().first());
     auto *globeView = rootWindow ? rootWindow->findChild<GlobeView *>(QStringLiteral("globeView")) : nullptr;
+
+    // Prevent Hyprland / Omarchy screensaver during active 3D SpaceMouse input
+    // (windowed or fullscreen) and while the window is fullscreen.
+    IdleInhibitor idleInhibitor(rootWindow);
+    if (auto *spaceNav = backend.spaceNav()) {
+        QObject::connect(spaceNav, &SpaceNavController::motionReceived,
+                         &idleInhibitor, &IdleInhibitor::notifyActivity);
+        QObject::connect(spaceNav, &SpaceNavController::buttonPressed,
+                         &idleInhibitor, &IdleInhibitor::notifyActivity);
+    }
 
     DbusService dbusService(&backend, globeView, rootWindow);
     dbusService.registerOnSessionBus();

@@ -10,6 +10,7 @@
 #include "czmlparser.h"
 #include "dbusservice.h"
 #include "globeview.h"
+#include "idleinhibitor.h"
 #include "kmlparser.h"
 #include "spacenav.h"
 #include "theme.h"
@@ -517,6 +518,46 @@ private slots:
         QVERIFY(GlobeView::isPointCoveredByVisibleTiles(41.9, 12.5, camPos, vp, 8)); // Rome
         QVERIFY(GlobeView::isPointCoveredByVisibleTiles(40.0, 9.0,  camPos, vp, 8)); // Sardinia
         QVERIFY(GlobeView::isPointCoveredByVisibleTiles(38.0, 14.0, camPos, vp, 8)); // Sicily
+    }
+
+    void idleInhibitorTracksSpaceMouseAndFullscreen() {
+        IdleInhibitor inh(nullptr, 120);
+        QSignalSpy spy(&inh, &IdleInhibitor::activeChanged);
+
+        QVERIFY(!inh.active());
+        QVERIFY(!inh.spaceMouseActive());
+        QVERIFY(!inh.fullscreenActive());
+
+        // SpaceMouse motion activates idle inhibition and auto-releases after timeout.
+        inh.notifyActivity();
+        QVERIFY(inh.active());
+        QVERIFY(inh.spaceMouseActive());
+        QCOMPARE(spy.count(), 1);
+
+        // Repeated motion keeps it active without spurious signal churn.
+        inh.notifyActivity();
+        QCOMPARE(spy.count(), 1);
+
+        QTRY_VERIFY(!inh.active());
+        QVERIFY(!inh.spaceMouseActive());
+        QCOMPARE(spy.count(), 2);
+
+        // Fullscreen holds inhibition even after SpaceMouse activity expires.
+        inh.setFullscreen(true);
+        QVERIFY(inh.active());
+        QVERIFY(inh.fullscreenActive());
+        QCOMPARE(spy.count(), 3);
+
+        inh.notifyActivity();
+        QCOMPARE(spy.count(), 3);
+        QTRY_VERIFY(!inh.spaceMouseActive());
+        QVERIFY(inh.active());
+        QCOMPARE(spy.count(), 3);
+
+        // Leaving fullscreen when SpaceMouse is idle releases inhibition.
+        inh.setFullscreen(false);
+        QVERIFY(!inh.active());
+        QCOMPARE(spy.count(), 4);
     }
 
     void themeFallsBack() {
